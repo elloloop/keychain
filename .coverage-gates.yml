@@ -1,0 +1,13 @@
+# Per-package coverage floors. Thresholds are a regression ratchet: a change
+# that drops a package below its floor fails CI. Raise a floor whenever
+# coverage climbs comfortably above it.
+#
+# Calibrated as packages land. Default applies to anything under include/
+# that doesn't have an explicit floor.
+default: 80
+
+include:
+  - internal/
+  - cmd/
+
+packages: {}

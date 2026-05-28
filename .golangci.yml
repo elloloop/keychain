@@ -1,0 +1,63 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - errname
+    - errorlint
+    - gocritic
+    - gosec
+    - nilerr
+    - nilnil
+    - perfsprint
+    - revive
+    - thelper
+    - unconvert
+  settings:
+    cyclop:
+      max-complexity: 35
+      package-average: 15
+    revive:
+      severity: warning
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+          disabled: true
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+  exclusions:
+    paths:
+      - gen/
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+        # G404: weak RNG and G101: hardcoded credentials are expected in test fixtures.
+        text: "(G404|G101):"
+      - path: _test\.go
+        linters:
+          - cyclop
+      - path: _test\.go
+        linters:
+          - nilnil
+
+formatters:
+  enable:
+    - gofumpt
+  exclusions:
+    paths:
+      - gen/

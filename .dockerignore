@@ -1,0 +1,10 @@
+.git
+.github
+docs
+test
+tests
+cover*.out
+nightly-reports
+dist
+*.md
+!README.md

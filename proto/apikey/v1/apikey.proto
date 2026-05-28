@@ -1,0 +1,269 @@
+// Package apikey.v1 is the wire contract for keychain — API-key issuance and
+// verification.
+//
+// Service shape:
+//
+//   Workspace ── owns ─▶ Api ── owns ─▶ ApiKey
+//
+// A Workspace is a top-level tenant boundary. An Api is a logical product
+// within a workspace ("prod-api", "voice-api"). An ApiKey is the bearer
+// credential issued under an Api.
+//
+// Verify hot path: the gateway calls VerifyKey with the plaintext bearer the
+// customer presented. Keychain hashes (sha256) and looks up the key, checks
+// permissions, evaluates every linked LimitRef against the rate-limiter
+// service inline (unless skip_ratelimit is set), and returns a unified
+// decision.
+
+syntax = "proto3";
+
+package apikey.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// ===========================================================================
+// Resources
+// ===========================================================================
+
+// Workspace is a top-level tenant boundary. Every Api and ApiKey belongs
+// to exactly one workspace.
+message Workspace {
+  string workspace_id = 1;
+  string name = 2;
+  // owner_principal_id is an opaque reference to a principal in the identity
+  // service (User or Group). Validated at CreateWorkspace time; not
+  // re-checked on the hot path.
+  string owner_principal_id = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  map<string, string> metadata = 6;
+}
+
+// Api is a logical product within a workspace. Keys are issued under an Api
+// so analytics, rotation, and key-prefix conventions can be scoped per
+// product without spilling across the whole workspace.
+message Api {
+  string api_id = 1;
+  string workspace_id = 2;
+  string name = 3;
+  // key_prefix is prepended to every key issued under this Api for human
+  // disambiguation in customer-side code (e.g. "ck_live_", "ck_test_").
+  // Does not affect hashing or lookup.
+  string key_prefix = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+  map<string, string> metadata = 7;
+}
+
+// LimitRef points at a Limit configured in the rate-limiter service. The
+// VerifyKey hot path consumes `cost` against every LimitRef on the key.
+message LimitRef {
+  string limit_id = 1;
+  string scope_key = 2;
+}
+
+// ApiKey is the issued bearer credential. Plaintext key material is never
+// stored server-side; only sha256(plaintext) is persisted. The plaintext
+// appears exactly once in CreateKeyResponse / RotateKeyResponse.
+message ApiKey {
+  string key_id = 1;
+  string api_id = 2;
+  string workspace_id = 3;
+  string owner_principal_id = 4;
+  string name = 5;
+  repeated string permissions = 6;
+  repeated LimitRef limit_refs = 7;
+  // expires_at is optional; absent means no expiry.
+  google.protobuf.Timestamp expires_at = 8;
+  // remaining_uses < 0 means unlimited. >= 0 is a hard credit; reaching 0
+  // makes the key fail verify with VERIFY_RESULT_DEPLETED.
+  int64 remaining_uses = 9;
+  bool enabled = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+  google.protobuf.Timestamp last_verified_at = 13;
+  map<string, string> metadata = 14;
+}
+
+// ===========================================================================
+// Workspace RPCs
+// ===========================================================================
+
+message CreateWorkspaceRequest {
+  string name = 1;
+  string owner_principal_id = 2;
+  map<string, string> metadata = 3;
+}
+
+message CreateWorkspaceResponse {
+  Workspace workspace = 1;
+}
+
+message GetWorkspaceRequest {
+  string workspace_id = 1;
+}
+
+message GetWorkspaceResponse {
+  Workspace workspace = 1;
+}
+
+// ===========================================================================
+// Api RPCs
+// ===========================================================================
+
+message CreateApiRequest {
+  string workspace_id = 1;
+  string name = 2;
+  string key_prefix = 3;
+  map<string, string> metadata = 4;
+}
+
+message CreateApiResponse {
+  Api api = 1;
+}
+
+message GetApiRequest {
+  string api_id = 1;
+}
+
+message GetApiResponse {
+  Api api = 1;
+}
+
+// ===========================================================================
+// Key RPCs
+// ===========================================================================
+
+message CreateKeyRequest {
+  string api_id = 1;
+  string owner_principal_id = 2;
+  string name = 3;
+  repeated string permissions = 4;
+  repeated LimitRef limit_refs = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  // remaining_uses < 0 → unlimited (server normalizes to -1).
+  int64 remaining_uses = 7;
+  map<string, string> metadata = 8;
+}
+
+message CreateKeyResponse {
+  ApiKey key = 1;
+  // plaintext appears exactly once; clients must store it securely.
+  string plaintext = 2;
+}
+
+message VerifyKeyRequest {
+  string plaintext = 1;
+  // required_permissions must all be present on the key. Empty means no
+  // permission check. action is a free-form audit tag (e.g.
+  // "chat.completions:write") that is recorded in the verify audit row
+  // and not enforced by itself.
+  repeated string required_permissions = 2;
+  string action = 3;
+  // cost is consumed against every limit_ref on the key. Caller-supplied
+  // (token count from LLM provider response, request weight, etc.).
+  int64 cost = 4;
+  string request_id = 5;
+  // skip_ratelimit lets a smart gateway that has cached the key skip the
+  // rate-limiter round-trip. Default false (the safe, common path).
+  bool skip_ratelimit = 6;
+}
+
+// VerifyResult enumerates exactly why a verify decision came out the way it
+// did. A response is valid iff result == VERIFY_RESULT_VALID.
+enum VerifyResult {
+  VERIFY_RESULT_UNSPECIFIED = 0;
+  VERIFY_RESULT_VALID = 1;
+  VERIFY_RESULT_NOT_FOUND = 2;
+  VERIFY_RESULT_REVOKED = 3;
+  VERIFY_RESULT_EXPIRED = 4;
+  VERIFY_RESULT_DEPLETED = 5;
+  VERIFY_RESULT_FORBIDDEN = 6;
+  VERIFY_RESULT_RATE_LIMITED = 7;
+}
+
+message LimitDecision {
+  string limit_id = 1;
+  string scope_key = 2;
+  bool allowed = 3;
+  int64 remaining = 4;
+  int64 retry_after_ms = 5;
+}
+
+message VerifyKeyResponse {
+  // valid is the consolidated decision; convenience field equal to
+  // (result == VERIFY_RESULT_VALID).
+  bool valid = 1;
+  VerifyResult result = 2;
+  // key_id and the fields below are populated whenever the key was found,
+  // so the gateway can log/audit even on rejection. Absent only on
+  // VERIFY_RESULT_NOT_FOUND.
+  string key_id = 3;
+  string api_id = 4;
+  string workspace_id = 5;
+  string owner_principal_id = 6;
+  repeated string permissions = 7;
+  repeated LimitDecision limit_decisions = 8;
+}
+
+message RevokeKeyRequest {
+  string key_id = 1;
+}
+
+message RevokeKeyResponse {}
+
+message RotateKeyRequest {
+  string key_id = 1;
+}
+
+message RotateKeyResponse {
+  ApiKey key = 1;
+  // plaintext appears exactly once; clients must store it securely.
+  string plaintext = 2;
+}
+
+message ListKeysRequest {
+  string api_id = 1;
+  // owner_principal_id is optional; when set, filters to keys owned by that
+  // principal.
+  string owner_principal_id = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListKeysResponse {
+  repeated ApiKey keys = 1;
+  string next_page_token = 2;
+}
+
+message GetKeyRequest {
+  string key_id = 1;
+}
+
+message GetKeyResponse {
+  ApiKey key = 1;
+}
+
+// ===========================================================================
+// Service
+// ===========================================================================
+
+service ApiKeyService {
+  // Workspace management — admin path.
+  rpc CreateWorkspace(CreateWorkspaceRequest) returns (CreateWorkspaceResponse);
+  rpc GetWorkspace(GetWorkspaceRequest) returns (GetWorkspaceResponse);
+
+  // Api management — admin path.
+  rpc CreateApi(CreateApiRequest) returns (CreateApiResponse);
+  rpc GetApi(GetApiRequest) returns (GetApiResponse);
+
+  // Key management — admin path.
+  rpc CreateKey(CreateKeyRequest) returns (CreateKeyResponse);
+  rpc RevokeKey(RevokeKeyRequest) returns (RevokeKeyResponse);
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+
+  // Key verification — hot path, called by the gateway on every request.
+  rpc VerifyKey(VerifyKeyRequest) returns (VerifyKeyResponse);
+}
