@@ -9,59 +9,23 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."
-
-PROJECT=keychain-e2e
-TARGET=localhost:28080
-
-cleanup() {
-  echo "==> tearing down"
-  docker compose -p "$PROJECT" -f docker-compose.yml down -v --remove-orphans >/dev/null 2>&1 || true
-}
+PROJECT=keychain-e2e-critical
+source "$(dirname "$0")/lib.sh"
 trap cleanup EXIT
 
-echo "==> docker compose up -d --build"
-docker compose -p "$PROJECT" -f docker-compose.yml up -d --build >/dev/null
-
-echo "==> waiting for keychain gRPC reflection ..."
-for i in $(seq 1 60); do
-  if grpcurl -plaintext "$TARGET" list >/dev/null 2>&1; then
-    echo "==> ready after ${i}s"
-    break
-  fi
-  if [ "$i" -eq 60 ]; then
-    echo "keychain did not come up"
-    docker compose -p "$PROJECT" -f docker-compose.yml logs keychain
-    exit 1
-  fi
-  sleep 1
-done
-
-call() {
-  local method=$1
-  local body=$2
-  grpcurl -plaintext -format json -d "$body" "$TARGET" "apikey.v1.ApiKeyService/$method"
-}
-
-assert_eq() {
-  local label=$1 expected=$2 actual=$3
-  if [ "$expected" != "$actual" ]; then
-    echo "FAIL $label: expected $expected, got $actual"
-    exit 1
-  fi
-}
+compose_up
 
 echo "==> CreateWorkspace"
 WORKSPACE=$(call CreateWorkspace '{"name":"e2e","ownerPrincipalId":"e2e_owner"}')
 WORKSPACE_ID=$(echo "$WORKSPACE" | jq -r '.workspace.workspaceId')
 echo "    workspace_id=$WORKSPACE_ID"
-[ -n "$WORKSPACE_ID" ] && [ "$WORKSPACE_ID" != "null" ] || { echo "missing workspace_id"; exit 1; }
+assert_nonempty "workspace_id" "$WORKSPACE_ID"
 
 echo "==> CreateApi"
 API=$(call CreateApi "$(jq -nc --arg w "$WORKSPACE_ID" '{workspaceId:$w,name:"prod",keyPrefix:"ck_e2e_"}')")
 API_ID=$(echo "$API" | jq -r '.api.apiId')
 echo "    api_id=$API_ID"
-[ -n "$API_ID" ] && [ "$API_ID" != "null" ] || { echo "missing api_id"; exit 1; }
+assert_nonempty "api_id" "$API_ID"
 
 echo "==> CreateKey"
 KEY=$(call CreateKey "$(jq -nc --arg a "$API_ID" '{apiId:$a,ownerPrincipalId:"e2e_user",name:"e2e-key"}')")
@@ -69,8 +33,8 @@ KEY_ID=$(echo "$KEY" | jq -r '.key.keyId')
 PLAINTEXT=$(echo "$KEY" | jq -r '.plaintext')
 echo "    key_id=$KEY_ID"
 echo "    plaintext=${PLAINTEXT:0:16}..."
-[ -n "$KEY_ID" ] && [ "$KEY_ID" != "null" ] || { echo "missing key_id"; exit 1; }
-[ -n "$PLAINTEXT" ] && [ "$PLAINTEXT" != "null" ] || { echo "missing plaintext"; exit 1; }
+assert_nonempty "key_id" "$KEY_ID"
+assert_nonempty "plaintext" "$PLAINTEXT"
 
 echo "==> VerifyKey (expect VALID)"
 VERIFY=$(call VerifyKey "$(jq -nc --arg p "$PLAINTEXT" '{plaintext:$p}')")

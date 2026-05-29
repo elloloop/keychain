@@ -33,10 +33,14 @@ type Store struct {
 // New opens a pgx pool against dsn, runs pending migrations, and returns a
 // ready Store. The caller is responsible for the pool's lifetime via Close.
 func New(ctx context.Context, dsn string) (*Store, error) {
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open pool: %w", err)
+	}
 	if err := RunMigrations(dsn); err != nil {
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("open pool: %w", err)
 	}
@@ -181,14 +185,11 @@ func (s *Store) CreateKey(ctx context.Context, k store.Key) (store.Key, error) {
 	k.CreatedAt = now
 	k.UpdatedAt = now
 
-	limitRefsJSON, err := json.Marshal(k.LimitRefs)
-	if err != nil {
-		return store.Key{}, fmt.Errorf("marshal limit_refs: %w", err)
-	}
+	limitRefsJSON, _ := json.Marshal(k.LimitRefs)
 	meta := marshalMetadata(k.Metadata)
 	perms := nonNilStrings(k.Permissions)
 
-	_, err = s.pool.Exec(ctx, `
+	_, err := s.pool.Exec(ctx, `
 		INSERT INTO keys (
 			key_id, api_id, workspace_id, owner_principal_id, name,
 			key_hash, permissions, limit_refs, expires_at, remaining_uses,
@@ -370,26 +371,33 @@ func (s *Store) TouchLastVerified(ctx context.Context, id string, at time.Time) 
 }
 
 func (s *Store) DecrementRemainingUses(ctx context.Context, id string) (int64, error) {
-	// CASE preserves unlimited (-1) keys; GREATEST clamps depleted credit
-	// at 0 instead of going negative on a racing duplicate verify.
 	var remaining int64
 	err := s.pool.QueryRow(ctx, `
 		UPDATE keys
-		SET remaining_uses = CASE
-		    WHEN remaining_uses < 0 THEN remaining_uses
-		    ELSE GREATEST(remaining_uses - 1, 0)
-		END,
+		SET remaining_uses = remaining_uses - 1,
 		    updated_at = $1
 		WHERE key_id = $2
+		  AND remaining_uses > 0
 		RETURNING remaining_uses`,
 		s.now(), id).Scan(&remaining)
+	if err == nil {
+		return remaining, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("decrement remaining: %w", err)
+	}
+
+	err = s.pool.QueryRow(ctx, `SELECT remaining_uses FROM keys WHERE key_id = $1`, id).Scan(&remaining)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, store.ErrNotFound
 		}
-		return 0, fmt.Errorf("decrement remaining: %w", err)
+		return 0, fmt.Errorf("select remaining: %w", err)
 	}
-	return remaining, nil
+	if remaining < 0 {
+		return -1, nil
+	}
+	return remaining, store.ErrDepleted
 }
 
 // ---------------------------------------------------------------------------

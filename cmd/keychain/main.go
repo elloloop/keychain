@@ -7,11 +7,9 @@
 //	print-config  print resolved KEYCHAIN_* configuration as JSON
 //	help          this message
 //
-// cmd/keychain is a thin shim over the keychainserver package: it loads
-// config, opens the configured store, constructs a keychainserver.Server,
-// registers it on a *grpc.Server, and handles signal-driven graceful
-// shutdown. A host program that embeds keychain in its own gRPC server
-// drives the same keychainserver.New entry point without this file.
+// cmd/keychain wires config loading, store selection, gRPC registration, and
+// signal-driven shutdown around keychainserver.New. A host program that embeds
+// keychain in its own gRPC server drives that same entry point directly.
 package main
 
 import (
@@ -42,12 +40,13 @@ import (
 var (
 	version = "dev"
 	commit  = "unknown"
+	osExit  = os.Exit
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		osExit(1)
 	}
 }
 
@@ -81,11 +80,7 @@ func printHelp() {
 
 func printConfig() error {
 	cfg := config.Load()
-	b, err := cfg.Redacted().JSON()
-	if err != nil {
-		return err
-	}
-	fmt.Println(string(b))
+	fmt.Println(string(cfg.Redacted().JSON()))
 	return cfg.Validate()
 }
 
@@ -98,6 +93,10 @@ func serve() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	return serveWithContext(ctx, cfg, logger)
+}
+
+func serveWithContext(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	st, closeStore, err := openStore(ctx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
@@ -141,7 +140,7 @@ func serve() error {
 		}
 	}
 
-	gracefulStop(server, metricsSrv, logger)
+	gracefulStop(server, metricsSrv, logger) //nolint:contextcheck // shutdown uses fresh contexts after ctx is canceled
 	return nil
 }
 
@@ -227,7 +226,16 @@ func startMetricsServer(ctx context.Context, addr string, logger *slog.Logger) *
 	return srv
 }
 
+type grpcStopper interface {
+	GracefulStop()
+	Stop()
+}
+
 func gracefulStop(grpcSrv *grpc.Server, metricsSrv *http.Server, logger *slog.Logger) {
+	gracefulStopWithTimeout(grpcSrv, metricsSrv, logger, 15*time.Second)
+}
+
+func gracefulStopWithTimeout(grpcSrv grpcStopper, metricsSrv *http.Server, logger *slog.Logger, timeout time.Duration) {
 	stopped := make(chan struct{})
 	go func() {
 		grpcSrv.GracefulStop()
@@ -235,7 +243,7 @@ func gracefulStop(grpcSrv *grpc.Server, metricsSrv *http.Server, logger *slog.Lo
 	}()
 	select {
 	case <-stopped:
-	case <-time.After(15 * time.Second):
+	case <-time.After(timeout):
 		logger.Warn("gRPC graceful stop timed out; forcing stop")
 		grpcSrv.Stop()
 	}

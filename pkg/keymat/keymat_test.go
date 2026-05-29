@@ -3,9 +3,16 @@ package keymat
 import (
 	"crypto/sha256"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
 
 func TestNewProducesUniqueKeys(t *testing.T) {
 	seen := map[string]bool{}
@@ -61,6 +68,23 @@ func TestNewProducesExpectedLength(t *testing.T) {
 	wantLen := len("ck_test_") + b32.EncodedLen(RandomBytes)
 	if len(plaintext) != wantLen {
 		t.Fatalf("len(plaintext) = %d, want %d", len(plaintext), wantLen)
+	}
+}
+
+func TestNewReturnsRandomReaderError(t *testing.T) {
+	orig := randomReader
+	randomReader = errReader{}
+	t.Cleanup(func() { randomReader = orig })
+
+	plaintext, hash, err := New("ck_test_")
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("New err = %v, want ErrUnexpectedEOF", err)
+	}
+	if plaintext != "" {
+		t.Fatalf("plaintext = %q, want empty", plaintext)
+	}
+	if hash != [HashSize]byte{} {
+		t.Fatalf("hash = %x, want zero", hash)
 	}
 }
 

@@ -2,8 +2,8 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -47,8 +47,8 @@ func (s *Store) CreateWorkspace(_ context.Context, w store.Workspace) (store.Wor
 	w.WorkspaceID = newID("ws")
 	w.CreatedAt = now
 	w.UpdatedAt = now
-	s.workspaces[w.WorkspaceID] = w
-	return w, nil
+	s.workspaces[w.WorkspaceID] = cloneWorkspace(w)
+	return cloneWorkspace(w), nil
 }
 
 func (s *Store) GetWorkspace(_ context.Context, id string) (store.Workspace, error) {
@@ -59,7 +59,7 @@ func (s *Store) GetWorkspace(_ context.Context, id string) (store.Workspace, err
 	if !ok {
 		return store.Workspace{}, store.ErrNotFound
 	}
-	return w, nil
+	return cloneWorkspace(w), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -77,8 +77,8 @@ func (s *Store) CreateAPI(_ context.Context, a store.API) (store.API, error) {
 	a.APIID = newID("api")
 	a.CreatedAt = now
 	a.UpdatedAt = now
-	s.apis[a.APIID] = a
-	return a, nil
+	s.apis[a.APIID] = cloneAPI(a)
+	return cloneAPI(a), nil
 }
 
 func (s *Store) GetAPI(_ context.Context, id string) (store.API, error) {
@@ -89,7 +89,7 @@ func (s *Store) GetAPI(_ context.Context, id string) (store.API, error) {
 	if !ok {
 		return store.API{}, store.ErrNotFound
 	}
-	return a, nil
+	return cloneAPI(a), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -112,12 +112,10 @@ func (s *Store) CreateKey(_ context.Context, k store.Key) (store.Key, error) {
 	k.KeyID = newID("key")
 	k.CreatedAt = now
 	k.UpdatedAt = now
-	// Defensive copy so callers mutating their input slice can't corrupt
-	// our stored state.
-	k.KeyHash = append([]byte(nil), k.KeyHash...)
+	k = cloneKey(k)
 	s.keys[k.KeyID] = k
 	s.hashIndex[hashKey] = k.KeyID
-	return k, nil
+	return cloneKey(k), nil
 }
 
 func (s *Store) GetKeyByID(_ context.Context, id string) (store.Key, error) {
@@ -128,7 +126,7 @@ func (s *Store) GetKeyByID(_ context.Context, id string) (store.Key, error) {
 	if !ok {
 		return store.Key{}, store.ErrNotFound
 	}
-	return k, nil
+	return cloneKey(k), nil
 }
 
 func (s *Store) GetKeyByHash(_ context.Context, hash []byte) (store.Key, error) {
@@ -139,7 +137,7 @@ func (s *Store) GetKeyByHash(_ context.Context, hash []byte) (store.Key, error) 
 	if !ok {
 		return store.Key{}, store.ErrNotFound
 	}
-	return s.keys[id], nil
+	return cloneKey(s.keys[id]), nil
 }
 
 func (s *Store) RevokeKey(_ context.Context, id string) error {
@@ -177,7 +175,7 @@ func (s *Store) RotateKey(_ context.Context, id string, newHash []byte) (store.K
 	k.UpdatedAt = s.now()
 	s.keys[id] = k
 	s.hashIndex[newHashKey] = id
-	return k, nil
+	return cloneKey(k), nil
 }
 
 func (s *Store) ListKeys(_ context.Context, opts store.ListKeysOpts) (store.ListKeysResult, error) {
@@ -218,7 +216,7 @@ func (s *Store) ListKeys(_ context.Context, opts store.ListKeysOpts) (store.List
 
 	out := make([]store.Key, 0, end-start)
 	for _, id := range ids[start:end] {
-		out = append(out, s.keys[id])
+		out = append(out, cloneKey(s.keys[id]))
 	}
 
 	next := ""
@@ -254,7 +252,7 @@ func (s *Store) DecrementRemainingUses(_ context.Context, id string) (int64, err
 		return -1, nil
 	}
 	if k.RemainingUses == 0 {
-		return 0, errors.New("memory: remaining uses already 0")
+		return 0, store.ErrDepleted
 	}
 	k.RemainingUses--
 	k.UpdatedAt = s.now()
@@ -268,4 +266,32 @@ func (s *Store) DecrementRemainingUses(_ context.Context, id string) (int64, err
 
 func newID(prefix string) string {
 	return prefix + "_" + uuid.NewString()
+}
+
+func cloneWorkspace(w store.Workspace) store.Workspace {
+	w.Metadata = maps.Clone(w.Metadata)
+	return w
+}
+
+func cloneAPI(a store.API) store.API {
+	a.Metadata = maps.Clone(a.Metadata)
+	return a
+}
+
+func cloneKey(k store.Key) store.Key {
+	k.KeyHash = append([]byte(nil), k.KeyHash...)
+	k.Permissions = append([]string(nil), k.Permissions...)
+	k.LimitRefs = append([]store.LimitRef(nil), k.LimitRefs...)
+	k.ExpiresAt = cloneTimePtr(k.ExpiresAt)
+	k.LastVerifiedAt = cloneTimePtr(k.LastVerifiedAt)
+	k.Metadata = maps.Clone(k.Metadata)
+	return k
+}
+
+func cloneTimePtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	v := *t
+	return &v
 }

@@ -91,8 +91,9 @@ func (c Config) Redacted() Config {
 }
 
 // JSON marshals the config (already-redacted form recommended).
-func (c Config) JSON() ([]byte, error) {
-	return json.MarshalIndent(c, "", "  ")
+func (c Config) JSON() []byte {
+	b, _ := json.MarshalIndent(c, "", "  ")
+	return b
 }
 
 func getEnv(key, fallback string) string {
