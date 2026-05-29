@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base32"
 	"errors"
+	"io"
 	"strings"
 )
 
@@ -23,6 +24,8 @@ const HashSize = sha256.Size
 // transcribed (uppercase only).
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
+var randomReader = rand.Reader
+
 // Errors returned by Validate.
 var (
 	ErrEmpty         = errors.New("keymat: plaintext is empty")
@@ -38,7 +41,7 @@ var (
 // intended behaviour.
 func New(prefix string) (plaintext string, hash [HashSize]byte, err error) {
 	var b [RandomBytes]byte
-	if _, err = rand.Read(b[:]); err != nil {
+	if _, err = io.ReadFull(randomReader, b[:]); err != nil {
 		return "", [HashSize]byte{}, err
 	}
 	plaintext = prefix + b32.EncodeToString(b[:])

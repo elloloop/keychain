@@ -1,7 +1,7 @@
 # Per-package coverage floors. Thresholds are a regression ratchet: a change
 # that drops a package below its floor fails CI. Raise a floor whenever
 # coverage climbs comfortably above it.
-default: 70
+default: 80
 
 include:
   - internal/
@@ -10,10 +10,10 @@ include:
   - pkg/
 
 packages:
-  cmd/keychain: 18
-  internal/config: 85
-  keychainserver: 72
-  keychainserver/store/conformance: 75
-  keychainserver/store/memory: 92
-  keychainserver/store/postgres: 68
-  pkg/keymat: 90
+  cmd/keychain: 95
+  internal/config: 100
+  keychainserver: 100
+  keychainserver/store/conformance: 79
+  keychainserver/store/memory: 100
+  keychainserver/store/postgres: 95
+  pkg/keymat: 100

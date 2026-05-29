@@ -2,6 +2,7 @@ package keychainserver_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -65,8 +66,13 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	st := memory.New()
 	rl := &fakeRateLimiter{}
+	return newRigWithRateLimiter(t, rl)
+}
+
+func newRigWithRateLimiter(t *testing.T, rl keychainserver.RateLimiter) *rig {
+	t.Helper()
+	st := memory.New()
 	svc, err := keychainserver.New(context.Background(), keychainserver.Options{
 		Store:       st,
 		RateLimiter: rl,
@@ -74,6 +80,7 @@ func newRig(t *testing.T) *rig {
 	if err != nil {
 		t.Fatalf("keychainserver.New: %v", err)
 	}
+	fakeRL, _ := rl.(*fakeRateLimiter)
 
 	ws, err := svc.CreateWorkspace(context.Background(), &apikeyv1.CreateWorkspaceRequest{
 		Name:             "acme",
@@ -93,7 +100,7 @@ func newRig(t *testing.T) *rig {
 	return &rig{
 		svc:         svc,
 		st:          st,
-		rl:          rl,
+		rl:          fakeRL,
 		apiID:       api.GetApi().GetApiId(),
 		workspaceID: ws.GetWorkspace().GetWorkspaceId(),
 	}
@@ -115,6 +122,93 @@ func (r *rig) createKey(t *testing.T, mut func(*apikeyv1.CreateKeyRequest)) (*ap
 		t.Fatalf("CreateKey: %v", err)
 	}
 	return resp.GetKey(), resp.GetPlaintext()
+}
+
+func requireStatusCode(t *testing.T, err error, want codes.Code) {
+	t.Helper()
+	if status.Code(err) != want {
+		t.Fatalf("err code = %v, want %v; err = %v", status.Code(err), want, err)
+	}
+}
+
+// ----- Workspace ------------------------------------------------------------
+
+func TestWorkspaceRPCsValidateRequiredFieldsAndRoundTripMetadata(t *testing.T) {
+	r := newRig(t)
+
+	_, err := r.svc.CreateWorkspace(context.Background(), &apikeyv1.CreateWorkspaceRequest{
+		OwnerPrincipalId: "owner",
+	})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	_, err = r.svc.CreateWorkspace(context.Background(), &apikeyv1.CreateWorkspaceRequest{
+		Name: "acme",
+	})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	created, err := r.svc.CreateWorkspace(context.Background(), &apikeyv1.CreateWorkspaceRequest{
+		Name:             "with-metadata",
+		OwnerPrincipalId: "owner",
+		Metadata:         map[string]string{"tier": "prod"},
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+
+	_, err = r.svc.GetWorkspace(context.Background(), &apikeyv1.GetWorkspaceRequest{})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	got, err := r.svc.GetWorkspace(context.Background(), &apikeyv1.GetWorkspaceRequest{
+		WorkspaceId: created.GetWorkspace().GetWorkspaceId(),
+	})
+	if err != nil {
+		t.Fatalf("GetWorkspace: %v", err)
+	}
+	if got.GetWorkspace().GetMetadata()["tier"] != "prod" {
+		t.Fatalf("metadata = %v, want tier=prod", got.GetWorkspace().GetMetadata())
+	}
+}
+
+// ----- Api ------------------------------------------------------------------
+
+func TestApiRPCsValidateRequiredFieldsAndRoundTripMetadata(t *testing.T) {
+	r := newRig(t)
+
+	_, err := r.svc.CreateApi(context.Background(), &apikeyv1.CreateApiRequest{Name: "prod"})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	_, err = r.svc.CreateApi(context.Background(), &apikeyv1.CreateApiRequest{WorkspaceId: r.workspaceID})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	_, err = r.svc.CreateApi(context.Background(), &apikeyv1.CreateApiRequest{
+		WorkspaceId: "ws_missing",
+		Name:        "prod",
+	})
+	requireStatusCode(t, err, codes.NotFound)
+
+	created, err := r.svc.CreateApi(context.Background(), &apikeyv1.CreateApiRequest{
+		WorkspaceId: r.workspaceID,
+		Name:        "metadata-api",
+		KeyPrefix:   "ck_meta_",
+		Metadata:    map[string]string{"region": "eu"},
+	})
+	if err != nil {
+		t.Fatalf("CreateApi: %v", err)
+	}
+
+	_, err = r.svc.GetApi(context.Background(), &apikeyv1.GetApiRequest{})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	got, err := r.svc.GetApi(context.Background(), &apikeyv1.GetApiRequest{ApiId: created.GetApi().GetApiId()})
+	if err != nil {
+		t.Fatalf("GetApi: %v", err)
+	}
+	if got.GetApi().GetKeyPrefix() != "ck_meta_" {
+		t.Fatalf("KeyPrefix = %q, want ck_meta_", got.GetApi().GetKeyPrefix())
+	}
+	if got.GetApi().GetMetadata()["region"] != "eu" {
+		t.Fatalf("metadata = %v, want region=eu", got.GetApi().GetMetadata())
+	}
 }
 
 // ----- CreateKey -------------------------------------------------------------
@@ -143,10 +237,8 @@ func TestCreateKeyReturnsPlaintextAndAssignsIDs(t *testing.T) {
 	}
 }
 
-// Regression: proto3 cannot distinguish "field omitted" from "0", so
-// CreateKey treats both as "unlimited credit". Found by the docker-compose
-// e2e the first time it ran: omitting remaining_uses produced an
-// insta-depleted key.
+// Proto3 cannot distinguish "field omitted" from "0", so CreateKey treats
+// both as unlimited credit instead of issuing an unusable key.
 func TestCreateKeyOmittedRemainingUsesIsUnlimited(t *testing.T) {
 	r := newRig(t)
 	key, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
@@ -183,6 +275,63 @@ func TestCreateKeyRejectsUnknownApi(t *testing.T) {
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("err code = %v, want NotFound", status.Code(err))
 	}
+}
+
+func TestCreateKeyRequiresOwnerPrincipalID(t *testing.T) {
+	r := newRig(t)
+	_, err := r.svc.CreateKey(context.Background(), &apikeyv1.CreateKeyRequest{ApiId: r.apiID})
+	requireStatusCode(t, err, codes.InvalidArgument)
+}
+
+func TestCreateAndGetKeyRoundTripsFields(t *testing.T) {
+	r := newRig(t)
+	expires := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	key, _ := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+		req.Name = "full-key"
+		req.Permissions = []string{"chat:read", "chat:write"}
+		req.LimitRefs = []*apikeyv1.LimitRef{{LimitId: "tokens", ScopeKey: "user:user_1"}}
+		req.ExpiresAt = timestamppb.New(expires)
+		req.RemainingUses = 2
+		req.Metadata = map[string]string{"env": "test"}
+	})
+
+	got, err := r.svc.GetKey(context.Background(), &apikeyv1.GetKeyRequest{KeyId: key.GetKeyId()})
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if got.GetKey().GetName() != "full-key" {
+		t.Fatalf("Name = %q, want full-key", got.GetKey().GetName())
+	}
+	if strings.Join(got.GetKey().GetPermissions(), ",") != "chat:read,chat:write" {
+		t.Fatalf("Permissions = %v", got.GetKey().GetPermissions())
+	}
+	if len(got.GetKey().GetLimitRefs()) != 1 || got.GetKey().GetLimitRefs()[0].GetLimitId() != "tokens" {
+		t.Fatalf("LimitRefs = %v", got.GetKey().GetLimitRefs())
+	}
+	if !got.GetKey().GetExpiresAt().AsTime().Equal(expires) {
+		t.Fatalf("ExpiresAt = %v, want %v", got.GetKey().GetExpiresAt().AsTime(), expires)
+	}
+	if got.GetKey().GetRemainingUses() != 2 {
+		t.Fatalf("RemainingUses = %d, want 2", got.GetKey().GetRemainingUses())
+	}
+	if got.GetKey().GetMetadata()["env"] != "test" {
+		t.Fatalf("Metadata = %v, want env=test", got.GetKey().GetMetadata())
+	}
+}
+
+func TestKeyRPCsValidateRequiredIDs(t *testing.T) {
+	r := newRig(t)
+	_, err := r.svc.GetKey(context.Background(), &apikeyv1.GetKeyRequest{})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	_, err = r.svc.RevokeKey(context.Background(), &apikeyv1.RevokeKeyRequest{})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	_, err = r.svc.RotateKey(context.Background(), &apikeyv1.RotateKeyRequest{})
+	requireStatusCode(t, err, codes.InvalidArgument)
+
+	_, err = r.svc.ListKeys(context.Background(), &apikeyv1.ListKeysRequest{})
+	requireStatusCode(t, err, codes.InvalidArgument)
 }
 
 // ----- VerifyKey: happy path -------------------------------------------------
@@ -270,6 +419,24 @@ func TestVerifyKeySkipRatelimitBypassesClient(t *testing.T) {
 	}
 	if len(r.rl.calls) != 0 {
 		t.Fatal("rate-limiter must not be called when skip_ratelimit is true")
+	}
+}
+
+func TestVerifyKeyRequiredPermissionsAllPresent(t *testing.T) {
+	r := newRig(t)
+	_, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+		req.Permissions = []string{"chat:read", "chat:write", "rerank:read"}
+	})
+
+	resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{
+		Plaintext:           plaintext,
+		RequiredPermissions: []string{"chat:read", "rerank:read"},
+	})
+	if err != nil {
+		t.Fatalf("VerifyKey: %v", err)
+	}
+	if resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_VALID {
+		t.Fatalf("Result = %v, want VALID", resp.GetResult())
 	}
 }
 
@@ -406,6 +573,106 @@ func TestVerifyKeyRateLimited(t *testing.T) {
 	}
 }
 
+func TestVerifyKeyRateLimiterErrorMapsUnavailable(t *testing.T) {
+	r := newRig(t)
+	_, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+		req.LimitRefs = []*apikeyv1.LimitRef{{LimitId: "tpm", ScopeKey: "openai"}}
+	})
+	r.rl.err = errors.New("rate limiter unavailable")
+
+	_, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: plaintext})
+	requireStatusCode(t, err, codes.Unavailable)
+}
+
+func TestVerifyKeyLimitsWithoutRateLimiterFailsClosed(t *testing.T) {
+	r := newRigWithRateLimiter(t, nil)
+	_, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+		req.LimitRefs = []*apikeyv1.LimitRef{{LimitId: "tpm", ScopeKey: "openai"}}
+	})
+
+	_, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: plaintext})
+	requireStatusCode(t, err, codes.FailedPrecondition)
+}
+
+func TestVerifyKeyRateLimitDenialDoesNotDecrementOrTouch(t *testing.T) {
+	r := newRig(t)
+	key, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+		req.RemainingUses = 2
+		req.LimitRefs = []*apikeyv1.LimitRef{{LimitId: "tpm", ScopeKey: "openai"}}
+	})
+	r.rl.decisions = []keychainserver.LimitDecision{{LimitID: "tpm", ScopeKey: "openai", Allowed: false}}
+
+	resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: plaintext, Cost: 1})
+	if err != nil {
+		t.Fatalf("VerifyKey: %v", err)
+	}
+	if resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_RATE_LIMITED {
+		t.Fatalf("Result = %v, want RATE_LIMITED", resp.GetResult())
+	}
+
+	got, err := r.svc.GetKey(context.Background(), &apikeyv1.GetKeyRequest{KeyId: key.GetKeyId()})
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if got.GetKey().GetRemainingUses() != 2 {
+		t.Fatalf("RemainingUses = %d, want 2", got.GetKey().GetRemainingUses())
+	}
+	if got.GetKey().GetLastVerifiedAt() != nil {
+		t.Fatal("LastVerifiedAt should remain nil after rate-limit denial")
+	}
+}
+
+type depletedOnDecrementStore struct {
+	store.Store
+}
+
+func (s depletedOnDecrementStore) DecrementRemainingUses(context.Context, string) (int64, error) {
+	return 0, store.ErrDepleted
+}
+
+func TestVerifyKeyDepletedDuringAtomicDecrementReturnsDepleted(t *testing.T) {
+	base := memory.New()
+	svc, err := keychainserver.New(context.Background(), keychainserver.Options{
+		Store: depletedOnDecrementStore{Store: base},
+	})
+	if err != nil {
+		t.Fatalf("keychainserver.New: %v", err)
+	}
+	ws, err := svc.CreateWorkspace(context.Background(), &apikeyv1.CreateWorkspaceRequest{
+		Name:             "acme",
+		OwnerPrincipalId: "owner",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+	api, err := svc.CreateApi(context.Background(), &apikeyv1.CreateApiRequest{
+		WorkspaceId: ws.GetWorkspace().GetWorkspaceId(),
+		Name:        "prod",
+	})
+	if err != nil {
+		t.Fatalf("CreateApi: %v", err)
+	}
+	key, err := svc.CreateKey(context.Background(), &apikeyv1.CreateKeyRequest{
+		ApiId:            api.GetApi().GetApiId(),
+		OwnerPrincipalId: "user_1",
+		RemainingUses:    1,
+	})
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	resp, err := svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: key.GetPlaintext()})
+	if err != nil {
+		t.Fatalf("VerifyKey: %v", err)
+	}
+	if resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_DEPLETED {
+		t.Fatalf("Result = %v, want DEPLETED", resp.GetResult())
+	}
+	if resp.GetValid() {
+		t.Fatal("Valid should be false when atomic decrement reports depletion")
+	}
+}
+
 func TestVerifyKeyRejectionDoesNotDecrementOrTouch(t *testing.T) {
 	r := newRig(t)
 	key, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
@@ -451,6 +718,52 @@ func TestVerifyKeyValidUpdatesLastVerified(t *testing.T) {
 	}
 	if last.AsTime().Before(before.Add(-time.Second)) {
 		t.Fatalf("LastVerifiedAt = %v looks stale (before = %v)", last.AsTime(), before)
+	}
+}
+
+func TestVerifyKeySingleUseConcurrentCallsDoNotBothValidate(t *testing.T) {
+	for attempt := 0; attempt < 100; attempt++ {
+		r := newRig(t)
+		_, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+			req.RemainingUses = 1
+		})
+
+		start := make(chan struct{})
+		results := make(chan apikeyv1.VerifyResult, 2)
+		errs := make(chan error, 2)
+		for i := 0; i < 2; i++ {
+			go func() {
+				<-start
+				resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: plaintext})
+				if err != nil {
+					errs <- err
+					results <- apikeyv1.VerifyResult_VERIFY_RESULT_UNSPECIFIED
+					return
+				}
+				errs <- nil
+				results <- resp.GetResult()
+			}()
+		}
+		close(start)
+
+		valid := 0
+		depleted := 0
+		for i := 0; i < 2; i++ {
+			if err := <-errs; err != nil {
+				t.Fatalf("attempt %d VerifyKey: %v", attempt, err)
+			}
+			switch got := <-results; got {
+			case apikeyv1.VerifyResult_VERIFY_RESULT_VALID:
+				valid++
+			case apikeyv1.VerifyResult_VERIFY_RESULT_DEPLETED:
+				depleted++
+			default:
+				t.Fatalf("attempt %d result = %v, want VALID or DEPLETED", attempt, got)
+			}
+		}
+		if valid != 1 || depleted != 1 {
+			t.Fatalf("attempt %d got valid=%d depleted=%d, want one of each", attempt, valid, depleted)
+		}
 	}
 }
 
@@ -505,6 +818,41 @@ func TestListKeysFiltersByApiAndOwner(t *testing.T) {
 		if k.GetOwnerPrincipalId() != "user_1" {
 			t.Fatalf("filter leaked: %q", k.GetOwnerPrincipalId())
 		}
+	}
+}
+
+func TestListKeysPaginates(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i < 5; i++ {
+		r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+			req.OwnerPrincipalId = "user_page"
+		})
+	}
+
+	seen := map[string]bool{}
+	token := ""
+	for page := 0; page < 10; page++ {
+		resp, err := r.svc.ListKeys(context.Background(), &apikeyv1.ListKeysRequest{
+			ApiId:     r.apiID,
+			PageSize:  2,
+			PageToken: token,
+		})
+		if err != nil {
+			t.Fatalf("ListKeys page %d: %v", page, err)
+		}
+		for _, k := range resp.GetKeys() {
+			if seen[k.GetKeyId()] {
+				t.Fatalf("duplicate key across pages: %s", k.GetKeyId())
+			}
+			seen[k.GetKeyId()] = true
+		}
+		if resp.GetNextPageToken() == "" {
+			break
+		}
+		token = resp.GetNextPageToken()
+	}
+	if len(seen) != 5 {
+		t.Fatalf("saw %d keys, want 5", len(seen))
 	}
 }
 

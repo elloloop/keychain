@@ -18,9 +18,8 @@
 //	g.Serve(lis)
 //
 // The Server implements apikeyv1.ApiKeyServiceServer directly — there is
-// no Start/Shutdown lifecycle, the host owns the listener and graceful
-// stop. cmd/keychain is a thin shim over this package; the container
-// behaves identically to embedding keychain in another process.
+// no Start/Shutdown lifecycle, the host owns the listener and graceful stop.
+// cmd/keychain uses the same keychainserver.New entry point as embedders.
 //
 // Stores: any keychainserver/store.Store implementation works.
 // keychainserver/store/postgres is the production driver and runs

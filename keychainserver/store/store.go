@@ -24,6 +24,7 @@ import (
 var (
 	ErrNotFound = errors.New("store: not found")
 	ErrConflict = errors.New("store: conflict")
+	ErrDepleted = errors.New("store: depleted")
 )
 
 // Workspace is the top-level tenant boundary.
@@ -124,7 +125,8 @@ type Store interface {
 	// verify decision in production wiring.
 	TouchLastVerified(ctx context.Context, id string, at time.Time) error
 	// DecrementRemainingUses subtracts 1 atomically from a key with
-	// RemainingUses >= 0 and returns the new value. For unlimited keys
-	// (RemainingUses < 0) it is a no-op and returns -1.
+	// RemainingUses > 0 and returns the new value. For unlimited keys
+	// (RemainingUses < 0) it is a no-op and returns -1. For depleted keys,
+	// it returns ErrDepleted.
 	DecrementRemainingUses(ctx context.Context, id string) (remaining int64, err error)
 }

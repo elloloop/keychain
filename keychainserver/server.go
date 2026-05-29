@@ -32,6 +32,8 @@ type Server struct {
 	now    func() time.Time
 }
 
+var newKeyMaterial = keymat.New
+
 // New constructs a Server from opts. opts.Store is required; opts.RateLimiter
 // is optional — when nil, VerifyKey for a key that carries LimitRefs and is
 // not called with SkipRatelimit=true fails closed with FailedPrecondition.
@@ -146,7 +148,7 @@ func (s *Server) CreateKey(ctx context.Context, req *apikeyv1.CreateKeyRequest) 
 		return nil, mapStoreErr(err)
 	}
 
-	plaintext, hash, err := keymat.New(api.KeyPrefix)
+	plaintext, hash, err := newKeyMaterial(api.KeyPrefix)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "generate key material: %v", err)
 	}
@@ -216,7 +218,7 @@ func (s *Server) RotateKey(ctx context.Context, req *apikeyv1.RotateKeyRequest) 
 	if err != nil {
 		return nil, mapStoreErr(err)
 	}
-	plaintext, hash, err := keymat.New(api.KeyPrefix)
+	plaintext, hash, err := newKeyMaterial(api.KeyPrefix)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "generate key material: %v", err)
 	}
@@ -314,6 +316,10 @@ func (s *Server) VerifyKey(ctx context.Context, req *apikeyv1.VerifyKeyRequest) 
 
 	if k.RemainingUses > 0 {
 		if _, err := s.store.DecrementRemainingUses(ctx, k.KeyID); err != nil {
+			if errors.Is(err, store.ErrDepleted) {
+				resp.Result = apikeyv1.VerifyResult_VERIFY_RESULT_DEPLETED
+				return resp, nil
+			}
 			return nil, status.Errorf(codes.Internal, "decrement remaining uses: %v", err)
 		}
 	}

@@ -99,8 +99,8 @@ contract.
 ## Embedding keychain in a Go server
 
 Instead of running the container, a Go program can import keychain and
-register it on its own `*grpc.Server`. Same code path as the container —
-`cmd/keychain` is a thin shim over the same `keychainserver.New`.
+register it on its own `*grpc.Server`. The container and embedders both
+construct the service through `keychainserver.New`.
 
 ```bash
 go get github.com/elloloop/keychain@latest
