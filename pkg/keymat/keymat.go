@@ -1,7 +1,3 @@
-// Package keymat is the key material primitive: random key generation,
-// sha256 hashing for lookup, and constant-time hash comparison. Plaintext
-// keys exist only at issuance time and at verify time; the store sees
-// hashes only.
 package keymat
 
 import (

@@ -13,8 +13,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	apikeyv1 "github.com/elloloop/keychain/gen/apikey/v1"
-	"github.com/elloloop/keychain/internal/keymat"
 	"github.com/elloloop/keychain/internal/store"
+	"github.com/elloloop/keychain/pkg/keymat"
 )
 
 // LimitDecision is the service-layer mirror of the wire LimitDecision; the
