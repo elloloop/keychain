@@ -42,10 +42,12 @@ type API struct {
 	Metadata    map[string]string
 }
 
-// LimitRef points at a rate-limiter Limit.
+// LimitRef points at a rate-limiter Limit. JSON tags are present so the
+// type round-trips cleanly through Postgres's JSONB column on the keys
+// table; field names on the wire stay snake_case to match the proto.
 type LimitRef struct {
-	LimitID  string
-	ScopeKey string
+	LimitID  string `json:"limit_id"`
+	ScopeKey string `json:"scope_key"`
 }
 
 // Key is the persisted bearer credential. KeyHash is sha256(plaintext) and

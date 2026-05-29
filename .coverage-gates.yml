@@ -12,3 +12,4 @@ packages:
   internal/service: 72
   internal/store/conformance: 75
   internal/store/memory: 92
+  internal/store/postgres: 68
