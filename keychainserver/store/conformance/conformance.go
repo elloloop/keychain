@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elloloop/keychain/internal/store"
+	"github.com/elloloop/keychain/keychainserver/store"
 )
 
 // Factory builds a fresh, isolated Store for each top-level subtest.

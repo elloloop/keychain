@@ -12,8 +12,8 @@ import (
 
 	apikeyv1 "github.com/elloloop/keychain/gen/apikey/v1"
 	"github.com/elloloop/keychain/internal/service"
-	"github.com/elloloop/keychain/internal/store"
-	"github.com/elloloop/keychain/internal/store/memory"
+	"github.com/elloloop/keychain/keychainserver/store"
+	"github.com/elloloop/keychain/keychainserver/store/memory"
 )
 
 // fakeRateLimiter is a programmable RateLimiter for tests. Reads `decisions`

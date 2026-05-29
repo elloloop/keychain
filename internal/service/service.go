@@ -13,7 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	apikeyv1 "github.com/elloloop/keychain/gen/apikey/v1"
-	"github.com/elloloop/keychain/internal/store"
+	"github.com/elloloop/keychain/keychainserver/store"
 	"github.com/elloloop/keychain/pkg/keymat"
 )
 

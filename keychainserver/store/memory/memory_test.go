@@ -3,9 +3,9 @@ package memory_test
 import (
 	"testing"
 
-	"github.com/elloloop/keychain/internal/store"
-	"github.com/elloloop/keychain/internal/store/conformance"
-	"github.com/elloloop/keychain/internal/store/memory"
+	"github.com/elloloop/keychain/keychainserver/store"
+	"github.com/elloloop/keychain/keychainserver/store/conformance"
+	"github.com/elloloop/keychain/keychainserver/store/memory"
 )
 
 // TestConformance runs the shared Store conformance suite against the

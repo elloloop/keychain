@@ -1,7 +1,3 @@
-// Package memory is the in-process Store driver. It is the differential
-// reference for tests and a workable default for single-instance
-// deployments that do not need persistence — every keychain restart
-// invalidates every issued key.
 package memory
 
 import (
@@ -14,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/elloloop/keychain/internal/store"
+	"github.com/elloloop/keychain/keychainserver/store"
 )
 
 // Store is an in-memory implementation of store.Store. Safe for concurrent

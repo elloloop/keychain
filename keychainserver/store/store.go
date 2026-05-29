@@ -1,11 +1,16 @@
-// Package store is the persistence boundary for keychain. Drivers
-// (memory, postgres) implement the Store interface and are verified
-// identical by the conformance suite in internal/store/conformance.
+// Package store is keychain's persistence boundary. Drivers under this
+// directory (memory, postgres) implement the Store interface and are
+// verified identical by the conformance suite in
+// keychainserver/store/conformance.
 //
 // The persisted shape (Workspace, API, Key) mirrors the proto wire types
 // but lives in this package so the storage layer is not tied to the wire
 // contract and so internal-only fields (KeyHash) never leak through the
 // public API.
+//
+// The package is part of keychain's public surface so external store
+// drivers (SQLite, MySQL, etc.) can implement Store and run the
+// conformance suite. Drivers must be safe for concurrent use.
 package store
 
 import (

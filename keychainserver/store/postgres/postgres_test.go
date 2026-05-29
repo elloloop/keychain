@@ -7,9 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/elloloop/keychain/internal/store"
-	"github.com/elloloop/keychain/internal/store/conformance"
-	"github.com/elloloop/keychain/internal/store/postgres"
+	"github.com/elloloop/keychain/keychainserver/store"
+	"github.com/elloloop/keychain/keychainserver/store/conformance"
+	"github.com/elloloop/keychain/keychainserver/store/postgres"
 )
 
 // TestConformance runs the shared Store conformance suite against a real

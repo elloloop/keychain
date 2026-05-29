@@ -28,9 +28,9 @@ import (
 	apikeyv1 "github.com/elloloop/keychain/gen/apikey/v1"
 	"github.com/elloloop/keychain/internal/config"
 	"github.com/elloloop/keychain/internal/service"
-	"github.com/elloloop/keychain/internal/store"
-	"github.com/elloloop/keychain/internal/store/memory"
-	"github.com/elloloop/keychain/internal/store/postgres"
+	"github.com/elloloop/keychain/keychainserver/store"
+	"github.com/elloloop/keychain/keychainserver/store/memory"
+	"github.com/elloloop/keychain/keychainserver/store/postgres"
 )
 
 var (

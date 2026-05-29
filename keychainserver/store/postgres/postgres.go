@@ -1,6 +1,3 @@
-// Package postgres is the durable Store driver. The schema lives in
-// embedded SQL migrations applied by RunMigrations; the driver itself is
-// driven by pgx/v5 and is safe for concurrent use.
 package postgres
 
 import (
@@ -21,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver for golang-migrate
 
-	"github.com/elloloop/keychain/internal/store"
+	"github.com/elloloop/keychain/keychainserver/store"
 )
 
 //go:embed migrations/*.sql
