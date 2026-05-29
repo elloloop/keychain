@@ -96,6 +96,63 @@ if !resp.Valid {
 bundle (`.tar.gz` / `.zip` + `.sha256`) for codegen against the pinned
 contract.
 
+## Embedding keychain in a Go server
+
+Instead of running the container, a Go program can import keychain and
+register it on its own `*grpc.Server`. Same code path as the container —
+`cmd/keychain` is a thin shim over the same `keychainserver.New`.
+
+```bash
+go get github.com/elloloop/keychain@latest
+```
+
+```go
+import (
+    "context"
+    "log"
+    "net"
+
+    "google.golang.org/grpc"
+
+    apikeyv1 "github.com/elloloop/keychain/gen/apikey/v1"
+    "github.com/elloloop/keychain/keychainserver"
+    kcpg "github.com/elloloop/keychain/keychainserver/store/postgres"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Postgres store: pings the pool and runs embedded migrations
+    // synchronously; returns an error on any failure.
+    store, err := kcpg.New(ctx, "postgres://keychain:keychain@db:5432/keychain?sslmode=disable")
+    if err != nil { log.Fatal(err) }
+    defer store.Close()
+
+    kc, err := keychainserver.New(ctx, keychainserver.Options{
+        Store: store,
+        // RateLimiter: optional; supply your own client to evaluate
+        // keys with LimitRefs at VerifyKey time.
+    })
+    if err != nil { log.Fatal(err) }
+
+    g := grpc.NewServer()
+    apikeyv1.RegisterApiKeyServiceServer(g, kc)
+    lis, _ := net.Listen("tcp", ":8080")
+    g.Serve(lis)
+}
+```
+
+A runnable end-to-end example lives in
+[`examples/embedded`](./examples/embedded). For tests and local dev the
+[`memory`](./keychainserver/store/memory) store works too — but it is
+**not durable** across restarts and is not for production, even
+single-instance deployments. Production uses
+[`postgres`](./keychainserver/store/postgres) or another driver
+implementing the [`Store`](./keychainserver/store) interface; external
+drivers run the shared
+[`conformance`](./keychainserver/store/conformance) suite to verify
+identical behaviour.
+
 ## Local development
 
 ```bash
