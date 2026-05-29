@@ -15,6 +15,22 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    name: Version matches tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v6
+      - name: VERSION matches git tag
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          file_version="$(tr -d '[:space:]' < VERSION)"
+          if [[ "$file_version" != "$tag_version" ]]; then
+            echo "VERSION is $file_version, but tag is $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -147,7 +163,7 @@ jobs:
   build-and-push:
     name: Build and Push Image
     runs-on: ubuntu-latest
-    needs: [lint, vuln, test, smoke, fuzz, docker-smoke]
+    needs: [version, lint, vuln, test, smoke, fuzz, docker-smoke]
     permissions:
       contents: read
       packages: write
@@ -157,11 +173,6 @@ jobs:
       tags: ${{ steps.meta.outputs.tags }}
     steps:
       - uses: actions/checkout@v6
-
-      - name: Inject version from git tag
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          echo "$VER" > VERSION
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
