@@ -56,25 +56,3 @@ updates:
       prefix: docker
       include: scope
 
-  - package-ecosystem: npm
-    directory: /docs-site
-    schedule:
-      interval: weekly
-      day: monday
-      time: "08:00"
-      timezone: "Etc/UTC"
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - docs-site
-    commit-message:
-      prefix: docs-deps
-      include: scope
-    groups:
-      docs-deps:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-
