@@ -1,4 +1,4 @@
-package service_test
+package keychainserver_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	apikeyv1 "github.com/elloloop/keychain/gen/apikey/v1"
-	"github.com/elloloop/keychain/internal/service"
+	"github.com/elloloop/keychain/keychainserver"
 	"github.com/elloloop/keychain/keychainserver/store"
 	"github.com/elloloop/keychain/keychainserver/store/memory"
 )
@@ -20,7 +20,7 @@ import (
 // to return; if `err` is set, returns the error instead. Records every call
 // so tests can assert "Consume was called with these refs and this cost."
 type fakeRateLimiter struct {
-	decisions []service.LimitDecision
+	decisions []keychainserver.LimitDecision
 	err       error
 	calls     []fakeRLCall
 }
@@ -31,7 +31,7 @@ type fakeRLCall struct {
 	id   string
 }
 
-func (f *fakeRateLimiter) Consume(_ context.Context, refs []store.LimitRef, cost int64, id string) ([]service.LimitDecision, error) {
+func (f *fakeRateLimiter) Consume(_ context.Context, refs []store.LimitRef, cost int64, id string) ([]keychainserver.LimitDecision, error) {
 	f.calls = append(f.calls, fakeRLCall{refs: refs, cost: cost, id: id})
 	if f.err != nil {
 		return nil, f.err
@@ -41,10 +41,10 @@ func (f *fakeRateLimiter) Consume(_ context.Context, refs []store.LimitRef, cost
 
 // allowDecisions builds a slice where every supplied ref is allowed with
 // 1000 remaining — the trivial happy-path fixture.
-func allowDecisions(refs []store.LimitRef) []service.LimitDecision {
-	out := make([]service.LimitDecision, 0, len(refs))
+func allowDecisions(refs []store.LimitRef) []keychainserver.LimitDecision {
+	out := make([]keychainserver.LimitDecision, 0, len(refs))
 	for _, r := range refs {
-		out = append(out, service.LimitDecision{
+		out = append(out, keychainserver.LimitDecision{
 			LimitID: r.LimitID, ScopeKey: r.ScopeKey,
 			Allowed: true, Remaining: 1000,
 		})
@@ -55,7 +55,7 @@ func allowDecisions(refs []store.LimitRef) []service.LimitDecision {
 // ----- test rig --------------------------------------------------------------
 
 type rig struct {
-	svc *service.Service
+	svc *keychainserver.Server
 	st  store.Store
 	rl  *fakeRateLimiter
 
@@ -67,7 +67,13 @@ func newRig(t *testing.T) *rig {
 	t.Helper()
 	st := memory.New()
 	rl := &fakeRateLimiter{}
-	svc := service.New(st, rl)
+	svc, err := keychainserver.New(context.Background(), keychainserver.Options{
+		Store:       st,
+		RateLimiter: rl,
+	})
+	if err != nil {
+		t.Fatalf("keychainserver.New: %v", err)
+	}
 
 	ws, err := svc.CreateWorkspace(context.Background(), &apikeyv1.CreateWorkspaceRequest{
 		Name:             "acme",
@@ -389,7 +395,7 @@ func TestVerifyKeyRateLimited(t *testing.T) {
 	_, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
 		req.LimitRefs = []*apikeyv1.LimitRef{{LimitId: "tpm", ScopeKey: "openai"}}
 	})
-	r.rl.decisions = []service.LimitDecision{{LimitID: "tpm", ScopeKey: "openai", Allowed: false, RetryAfterMs: 5000}}
+	r.rl.decisions = []keychainserver.LimitDecision{{LimitID: "tpm", ScopeKey: "openai", Allowed: false, RetryAfterMs: 5000}}
 
 	resp, _ := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: plaintext, Cost: 10})
 	if resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_RATE_LIMITED {

@@ -88,7 +88,7 @@ Every new function gets tests. Every bug fix gets a regression test
 that fails before the fix and passes after. Postgres-backed behaviour
 is covered by tests that run against a real Postgres (gated by
 `KEYCHAIN_TEST_POSTGRES_URL`), not only mocks. The Store conformance
-suite (`internal/store/conformance`) is extended, not bypassed, when a
+suite (`keychainserver/store/conformance`) is extended, not bypassed, when a
 new driver lands. Coverage gates (`.coverage-gates.yml`) get raised
 when coverage climbs, never lowered to let a regression through.
 

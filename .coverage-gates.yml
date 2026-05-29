@@ -6,13 +6,13 @@ default: 70
 include:
   - internal/
   - cmd/
-  - keychainserver/
+  - keychainserver
   - pkg/
 
 packages:
   cmd/keychain: 18
   internal/config: 85
-  internal/service: 72
+  keychainserver: 72
   keychainserver/store/conformance: 75
   keychainserver/store/memory: 92
   keychainserver/store/postgres: 68

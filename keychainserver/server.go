@@ -1,11 +1,9 @@
-// Package service implements the apikey.v1 gRPC contract on top of a
-// pluggable store.Store and a rate-limiter client. The package contains no
-// transport-specific code; cmd/keychain wires it into a real gRPC server.
-package service
+package keychainserver
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -17,49 +15,58 @@ import (
 	"github.com/elloloop/keychain/pkg/keymat"
 )
 
-// LimitDecision is the service-layer mirror of the wire LimitDecision; the
-// rate-limiter client returns these so it does not need to import the proto
-// package.
-type LimitDecision struct {
-	LimitID      string
-	ScopeKey     string
-	Allowed      bool
-	Remaining    int64
-	RetryAfterMs int64
-}
-
-// RateLimiter is the subset of the rate-limiter gRPC client keychain needs.
-// Implementations evaluate every supplied LimitRef and return a decision
-// per ref; aggregate failures so the verify handler can report all denied
-// limits, not just the first.
-type RateLimiter interface {
-	Consume(ctx context.Context, refs []store.LimitRef, cost int64, requestID string) ([]LimitDecision, error)
-}
-
-// Service implements apikeyv1.ApiKeyServiceServer.
-type Service struct {
+// Server implements apikeyv1.ApiKeyServiceServer. Build it with New and
+// register it on any *grpc.Server (or any grpc.ServiceRegistrar):
+//
+//	kc, err := keychainserver.New(ctx, keychainserver.Options{Store: st})
+//	apikeyv1.RegisterApiKeyServiceServer(g, kc)
+//
+// A host program owns the listener and graceful shutdown; the Server
+// holds no goroutines and has no Start/Stop lifecycle.
+type Server struct {
 	apikeyv1.UnimplementedApiKeyServiceServer
 
-	store store.Store
-	rl    RateLimiter
-	now   func() time.Time
+	store  store.Store
+	rl     RateLimiter
+	logger *slog.Logger
+	now    func() time.Time
 }
 
-// New constructs a Service. rl may be nil; if so, any VerifyKey call with
-// a key that has LimitRefs and skip_ratelimit=false will fail closed.
-func New(s store.Store, rl RateLimiter) *Service {
-	return &Service{
-		store: s,
-		rl:    rl,
-		now:   func() time.Time { return time.Now().UTC() },
+// New constructs a Server from opts. opts.Store is required; opts.RateLimiter
+// is optional — when nil, VerifyKey for a key that carries LimitRefs and is
+// not called with SkipRatelimit=true fails closed with FailedPrecondition.
+// opts.Logger is optional and defaults to a discarding logger.
+//
+// ctx is reserved for future construction-time setup (currently unused);
+// New does not retain it.
+func New(_ context.Context, opts Options) (*Server, error) {
+	if opts.Store == nil {
+		return nil, errors.New("keychainserver: Options.Store is required")
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(discardWriter{}, &slog.HandlerOptions{Level: slog.LevelError}))
+	}
+	return &Server{
+		store:  opts.Store,
+		rl:     opts.RateLimiter,
+		logger: logger,
+		now:    func() time.Time { return time.Now().UTC() },
+	}, nil
 }
+
+// discardWriter is the no-op io.Writer used by the default logger so a
+// Server constructed with a nil Logger emits nothing rather than spamming
+// the host's stderr.
+type discardWriter struct{}
+
+func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 // ---------------------------------------------------------------------------
 // Workspace RPCs
 // ---------------------------------------------------------------------------
 
-func (s *Service) CreateWorkspace(ctx context.Context, req *apikeyv1.CreateWorkspaceRequest) (*apikeyv1.CreateWorkspaceResponse, error) {
+func (s *Server) CreateWorkspace(ctx context.Context, req *apikeyv1.CreateWorkspaceRequest) (*apikeyv1.CreateWorkspaceResponse, error) {
 	if req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
@@ -77,7 +84,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, req *apikeyv1.CreateWorks
 	return &apikeyv1.CreateWorkspaceResponse{Workspace: workspaceToProto(w)}, nil
 }
 
-func (s *Service) GetWorkspace(ctx context.Context, req *apikeyv1.GetWorkspaceRequest) (*apikeyv1.GetWorkspaceResponse, error) {
+func (s *Server) GetWorkspace(ctx context.Context, req *apikeyv1.GetWorkspaceRequest) (*apikeyv1.GetWorkspaceResponse, error) {
 	if req.GetWorkspaceId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
@@ -92,7 +99,7 @@ func (s *Service) GetWorkspace(ctx context.Context, req *apikeyv1.GetWorkspaceRe
 // API RPCs
 // ---------------------------------------------------------------------------
 
-func (s *Service) CreateApi(ctx context.Context, req *apikeyv1.CreateApiRequest) (*apikeyv1.CreateApiResponse, error) { //nolint:revive // method name must match the proto-generated ApiKeyServiceServer interface
+func (s *Server) CreateApi(ctx context.Context, req *apikeyv1.CreateApiRequest) (*apikeyv1.CreateApiResponse, error) { //nolint:revive // method name must match the proto-generated ApiKeyServiceServer interface
 	if req.GetWorkspaceId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
@@ -111,7 +118,7 @@ func (s *Service) CreateApi(ctx context.Context, req *apikeyv1.CreateApiRequest)
 	return &apikeyv1.CreateApiResponse{Api: apiToProto(a)}, nil
 }
 
-func (s *Service) GetApi(ctx context.Context, req *apikeyv1.GetApiRequest) (*apikeyv1.GetApiResponse, error) { //nolint:revive // method name must match the proto-generated ApiKeyServiceServer interface
+func (s *Server) GetApi(ctx context.Context, req *apikeyv1.GetApiRequest) (*apikeyv1.GetApiResponse, error) { //nolint:revive // method name must match the proto-generated ApiKeyServiceServer interface
 	if req.GetApiId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "api_id is required")
 	}
@@ -126,7 +133,7 @@ func (s *Service) GetApi(ctx context.Context, req *apikeyv1.GetApiRequest) (*api
 // Key RPCs
 // ---------------------------------------------------------------------------
 
-func (s *Service) CreateKey(ctx context.Context, req *apikeyv1.CreateKeyRequest) (*apikeyv1.CreateKeyResponse, error) {
+func (s *Server) CreateKey(ctx context.Context, req *apikeyv1.CreateKeyRequest) (*apikeyv1.CreateKeyResponse, error) {
 	if req.GetApiId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "api_id is required")
 	}
@@ -176,7 +183,7 @@ func (s *Service) CreateKey(ctx context.Context, req *apikeyv1.CreateKeyRequest)
 	}, nil
 }
 
-func (s *Service) GetKey(ctx context.Context, req *apikeyv1.GetKeyRequest) (*apikeyv1.GetKeyResponse, error) {
+func (s *Server) GetKey(ctx context.Context, req *apikeyv1.GetKeyRequest) (*apikeyv1.GetKeyResponse, error) {
 	if req.GetKeyId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
@@ -187,7 +194,7 @@ func (s *Service) GetKey(ctx context.Context, req *apikeyv1.GetKeyRequest) (*api
 	return &apikeyv1.GetKeyResponse{Key: keyToProto(k)}, nil
 }
 
-func (s *Service) RevokeKey(ctx context.Context, req *apikeyv1.RevokeKeyRequest) (*apikeyv1.RevokeKeyResponse, error) {
+func (s *Server) RevokeKey(ctx context.Context, req *apikeyv1.RevokeKeyRequest) (*apikeyv1.RevokeKeyResponse, error) {
 	if req.GetKeyId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
@@ -197,7 +204,7 @@ func (s *Service) RevokeKey(ctx context.Context, req *apikeyv1.RevokeKeyRequest)
 	return &apikeyv1.RevokeKeyResponse{}, nil
 }
 
-func (s *Service) RotateKey(ctx context.Context, req *apikeyv1.RotateKeyRequest) (*apikeyv1.RotateKeyResponse, error) {
+func (s *Server) RotateKey(ctx context.Context, req *apikeyv1.RotateKeyRequest) (*apikeyv1.RotateKeyResponse, error) {
 	if req.GetKeyId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
@@ -223,7 +230,7 @@ func (s *Service) RotateKey(ctx context.Context, req *apikeyv1.RotateKeyRequest)
 	}, nil
 }
 
-func (s *Service) ListKeys(ctx context.Context, req *apikeyv1.ListKeysRequest) (*apikeyv1.ListKeysResponse, error) {
+func (s *Server) ListKeys(ctx context.Context, req *apikeyv1.ListKeysRequest) (*apikeyv1.ListKeysResponse, error) {
 	if req.GetApiId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "api_id is required")
 	}
@@ -249,7 +256,7 @@ func (s *Service) ListKeys(ctx context.Context, req *apikeyv1.ListKeysRequest) (
 // VerifyKey is the hot path. Order of checks is cheapest-first: hash
 // lookup, enabled/expiry/credit, permission, rate-limit. Side effects
 // (touch + decrement) happen only on a VALID decision.
-func (s *Service) VerifyKey(ctx context.Context, req *apikeyv1.VerifyKeyRequest) (*apikeyv1.VerifyKeyResponse, error) {
+func (s *Server) VerifyKey(ctx context.Context, req *apikeyv1.VerifyKeyRequest) (*apikeyv1.VerifyKeyResponse, error) {
 	if err := keymat.Validate(req.GetPlaintext(), ""); err != nil {
 		return notFound(), nil //nolint:nilerr // a malformed plaintext is a verify-time NOT_FOUND, not an RPC-level error
 	}

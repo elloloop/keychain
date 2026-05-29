@@ -6,6 +6,12 @@
 //	version       print build version and commit
 //	print-config  print resolved KEYCHAIN_* configuration as JSON
 //	help          this message
+//
+// cmd/keychain is a thin shim over the keychainserver package: it loads
+// config, opens the configured store, constructs a keychainserver.Server,
+// registers it on a *grpc.Server, and handles signal-driven graceful
+// shutdown. A host program that embeds keychain in its own gRPC server
+// drives the same keychainserver.New entry point without this file.
 package main
 
 import (
@@ -27,7 +33,7 @@ import (
 
 	apikeyv1 "github.com/elloloop/keychain/gen/apikey/v1"
 	"github.com/elloloop/keychain/internal/config"
-	"github.com/elloloop/keychain/internal/service"
+	"github.com/elloloop/keychain/keychainserver"
 	"github.com/elloloop/keychain/keychainserver/store"
 	"github.com/elloloop/keychain/keychainserver/store/memory"
 	"github.com/elloloop/keychain/keychainserver/store/postgres"
@@ -98,11 +104,17 @@ func serve() error {
 	}
 	defer closeStore()
 
-	rl := newFailClosedRateLimiter(cfg.RateLimiterAddr, logger)
-	svc := service.New(st, rl)
+	kc, err := keychainserver.New(ctx, keychainserver.Options{
+		Store:       st,
+		RateLimiter: newFailClosedRateLimiter(cfg.RateLimiterAddr, logger),
+		Logger:      logger,
+	})
+	if err != nil {
+		return fmt.Errorf("keychainserver.New: %w", err)
+	}
 
 	server := grpc.NewServer()
-	apikeyv1.RegisterApiKeyServiceServer(server, svc)
+	apikeyv1.RegisterApiKeyServiceServer(server, kc)
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
 	healthSrv.SetServingStatus("apikey.v1.ApiKeyService", healthgrpc.HealthCheckResponse_SERVING)
@@ -173,10 +185,10 @@ func newFailClosedRateLimiter(addr string, logger *slog.Logger) *failClosedRateL
 	return &failClosedRateLimiter{addr: addr, logger: logger}
 }
 
-func (r *failClosedRateLimiter) Consume(_ context.Context, refs []store.LimitRef, cost int64, _ string) ([]service.LimitDecision, error) {
-	out := make([]service.LimitDecision, 0, len(refs))
+func (r *failClosedRateLimiter) Consume(_ context.Context, refs []store.LimitRef, cost int64, _ string) ([]keychainserver.LimitDecision, error) {
+	out := make([]keychainserver.LimitDecision, 0, len(refs))
 	for _, ref := range refs {
-		out = append(out, service.LimitDecision{
+		out = append(out, keychainserver.LimitDecision{
 			LimitID:   ref.LimitID,
 			ScopeKey:  ref.ScopeKey,
 			Allowed:   false,

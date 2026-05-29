@@ -22,11 +22,13 @@ RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY cmd/      ./cmd/
-COPY gen/      ./gen/
-COPY internal/ ./internal/
-COPY proto/    ./proto/
-COPY VERSION   ./
+COPY cmd/            ./cmd/
+COPY gen/            ./gen/
+COPY internal/       ./internal/
+COPY keychainserver/ ./keychainserver/
+COPY pkg/            ./pkg/
+COPY proto/          ./proto/
+COPY VERSION         ./
 
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build \
