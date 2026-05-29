@@ -8,6 +8,8 @@ include:
   - cmd/
 
 packages:
+  cmd/keychain: 18
+  internal/config: 85
   internal/keymat: 90
   internal/service: 72
   internal/store/conformance: 75
