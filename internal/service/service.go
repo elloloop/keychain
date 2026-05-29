@@ -144,8 +144,12 @@ func (s *Service) CreateKey(ctx context.Context, req *apikeyv1.CreateKeyRequest)
 		return nil, status.Errorf(codes.Internal, "generate key material: %v", err)
 	}
 
+	// proto3 cannot distinguish "field omitted" from "field set to 0" for
+	// scalar fields, so we treat both as "unlimited". Callers that actually
+	// want a credit-style key pass a positive integer; the degenerate "0
+	// remaining at issuance time" key has no legitimate use case.
 	remaining := req.GetRemainingUses()
-	if remaining < 0 {
+	if remaining <= 0 {
 		remaining = -1
 	}
 

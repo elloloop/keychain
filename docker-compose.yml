@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: keychain
       POSTGRES_DB: keychain
     ports:
-      - "5432:5432"
+      - "25432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U keychain"]
       interval: 5s

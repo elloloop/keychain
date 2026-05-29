@@ -137,6 +137,27 @@ func TestCreateKeyReturnsPlaintextAndAssignsIDs(t *testing.T) {
 	}
 }
 
+// Regression: proto3 cannot distinguish "field omitted" from "0", so
+// CreateKey treats both as "unlimited credit". Found by the docker-compose
+// e2e the first time it ran: omitting remaining_uses produced an
+// insta-depleted key.
+func TestCreateKeyOmittedRemainingUsesIsUnlimited(t *testing.T) {
+	r := newRig(t)
+	key, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+		req.RemainingUses = 0
+	})
+	if key.GetRemainingUses() != -1 {
+		t.Fatalf("RemainingUses = %d, want -1 (unlimited)", key.GetRemainingUses())
+	}
+	resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: plaintext})
+	if err != nil {
+		t.Fatalf("VerifyKey: %v", err)
+	}
+	if resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_VALID {
+		t.Fatalf("Result = %v, want VALID", resp.GetResult())
+	}
+}
+
 func TestCreateKeyRequiresApiID(t *testing.T) {
 	r := newRig(t)
 	_, err := r.svc.CreateKey(context.Background(), &apikeyv1.CreateKeyRequest{
