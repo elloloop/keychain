@@ -25,7 +25,7 @@ permissions:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
@@ -42,7 +42,7 @@ jobs:
 
   protobuf:
     name: Protobuf
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
@@ -65,7 +65,7 @@ jobs:
 
   vuln:
     name: Vulnerability scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
@@ -80,7 +80,7 @@ jobs:
 
   test:
     name: Build + Test + Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:
@@ -127,7 +127,7 @@ jobs:
 
   smoke:
     name: Boot smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
@@ -145,7 +145,7 @@ jobs:
 
   fuzz:
     name: Fuzz smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
@@ -176,7 +176,7 @@ jobs:
 
   docker:
     name: Docker Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -195,7 +195,7 @@ jobs:
 
   e2e:
     name: Docker Compose E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -208,16 +208,11 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           go install github.com/fullstorydev/grpcurl/cmd/grpcurl@${{ env.GRPCURL_VERSION }}
       - name: Run Docker Compose e2e
-        run: |
-          if [[ -x test/e2e/docker-compose-critical-rpcs.sh ]]; then
-            test/e2e/docker-compose-critical-rpcs.sh
-          else
-            echo "no e2e script under test/e2e — skipping"
-          fi
+        run: test/e2e/run-docker-compose-suite.sh
 
   security:
     name: Filesystem Vulnerability Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
@@ -232,7 +227,7 @@ jobs:
 
   all-checks:
     name: All Checks Passed
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [lint, protobuf, vuln, test, smoke, fuzz, docker, e2e, security]
     if: always()
     steps:
