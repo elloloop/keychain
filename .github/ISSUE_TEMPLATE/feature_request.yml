@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest a capability for the generic quota service.
+description: Suggest a keychain capability.
 title: "[feature]: "
 labels: ["enhancement"]
 body:
@@ -7,7 +7,7 @@ body:
     id: problem
     attributes:
       label: Problem
-      description: What generic quota or rate limiting problem should this solve?
+      description: What API-key issuance or verification problem should this solve?
     validations:
       required: true
   - type: textarea
@@ -21,5 +21,4 @@ body:
     attributes:
       label: Boundary check
       options:
-        - label: This does not require the service to own product plans, pricing, profiles, or entitlements.
-
+        - label: This keeps keychain focused on API-key issuance, verification, and policy checks.

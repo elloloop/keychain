@@ -173,10 +173,8 @@ func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (sto
 // rate-limiter wiring
 // ---------------------------------------------------------------------------
 
-// failClosedRateLimiter is the v0.1.0 placeholder. It does not call any
-// real rate-limiter; if a key carries limit_refs, verify is denied with
-// a clear "v0.2.0 catalog feature required" message. Keys without
-// limit_refs are unaffected.
+// failClosedRateLimiter does not call a real rate-limiter; if a key carries
+// limit_refs, verify is denied. Keys without limit_refs are unaffected.
 type failClosedRateLimiter struct {
 	addr   string
 	logger *slog.Logger
@@ -184,7 +182,7 @@ type failClosedRateLimiter struct {
 
 func newFailClosedRateLimiter(addr string, logger *slog.Logger) *failClosedRateLimiter {
 	if addr != "" {
-		logger.Warn("KEYCHAIN_RATELIMITER_ADDR is set but limit-catalog wiring is a v0.2.0 feature; keys with limit_refs will fail closed", "addr", addr)
+		logger.Warn("KEYCHAIN_RATELIMITER_ADDR is set but limit-catalog wiring is not implemented; keys with limit_refs will fail closed", "addr", addr)
 	}
 	return &failClosedRateLimiter{addr: addr, logger: logger}
 }
