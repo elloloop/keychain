@@ -573,6 +573,116 @@ func TestVerifyKeyRateLimited(t *testing.T) {
 	}
 }
 
+func TestVerifyKeyResponseFieldsForDecisionMatrix(t *testing.T) {
+	r := newRig(t)
+
+	assertIdentity := func(t *testing.T, resp *apikeyv1.VerifyKeyResponse, key *apikeyv1.ApiKey) {
+		t.Helper()
+		if resp.GetKeyId() != key.GetKeyId() {
+			t.Fatalf("KeyId = %q, want %q", resp.GetKeyId(), key.GetKeyId())
+		}
+		if resp.GetApiId() != key.GetApiId() {
+			t.Fatalf("ApiId = %q, want %q", resp.GetApiId(), key.GetApiId())
+		}
+		if resp.GetWorkspaceId() != key.GetWorkspaceId() {
+			t.Fatalf("WorkspaceId = %q, want %q", resp.GetWorkspaceId(), key.GetWorkspaceId())
+		}
+		if resp.GetOwnerPrincipalId() != key.GetOwnerPrincipalId() {
+			t.Fatalf("OwnerPrincipalId = %q, want %q", resp.GetOwnerPrincipalId(), key.GetOwnerPrincipalId())
+		}
+	}
+
+	t.Run("not found omits key identity", func(t *testing.T) {
+		resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: "ck_test_missing"})
+		if err != nil {
+			t.Fatalf("VerifyKey: %v", err)
+		}
+		if resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_NOT_FOUND {
+			t.Fatalf("Result = %v, want NOT_FOUND", resp.GetResult())
+		}
+		if resp.GetValid() || resp.GetKeyId() != "" || resp.GetApiId() != "" || resp.GetWorkspaceId() != "" {
+			t.Fatalf("not-found response leaked identity fields: %+v", resp)
+		}
+	})
+
+	t.Run("valid includes identity and permissions", func(t *testing.T) {
+		key, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+			req.Permissions = []string{"read", "write"}
+		})
+		resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: plaintext})
+		if err != nil {
+			t.Fatalf("VerifyKey: %v", err)
+		}
+		if !resp.GetValid() || resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_VALID {
+			t.Fatalf("response = %+v, want VALID", resp)
+		}
+		assertIdentity(t, resp, key)
+		if strings.Join(resp.GetPermissions(), ",") != "read,write" {
+			t.Fatalf("Permissions = %v, want read,write", resp.GetPermissions())
+		}
+	})
+
+	t.Run("forbidden includes identity without spending credit", func(t *testing.T) {
+		key, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+			req.Permissions = []string{"read"}
+			req.RemainingUses = 2
+		})
+		resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{
+			Plaintext:           plaintext,
+			RequiredPermissions: []string{"write"},
+		})
+		if err != nil {
+			t.Fatalf("VerifyKey: %v", err)
+		}
+		if resp.GetValid() || resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_FORBIDDEN {
+			t.Fatalf("response = %+v, want FORBIDDEN", resp)
+		}
+		assertIdentity(t, resp, key)
+		got, err := r.svc.GetKey(context.Background(), &apikeyv1.GetKeyRequest{KeyId: key.GetKeyId()})
+		if err != nil {
+			t.Fatalf("GetKey: %v", err)
+		}
+		if got.GetKey().GetRemainingUses() != 2 || got.GetKey().GetLastVerifiedAt() != nil {
+			t.Fatalf("forbidden verify mutated key: %+v", got.GetKey())
+		}
+	})
+
+	t.Run("rate limited returns every limiter decision without spending credit", func(t *testing.T) {
+		key, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+			req.RemainingUses = 2
+			req.LimitRefs = []*apikeyv1.LimitRef{
+				{LimitId: "requests", ScopeKey: "workspace:acme"},
+				{LimitId: "tokens", ScopeKey: "user:user_1"},
+			}
+		})
+		r.rl.decisions = []keychainserver.LimitDecision{
+			{LimitID: "requests", ScopeKey: "workspace:acme", Allowed: true, Remaining: 9},
+			{LimitID: "tokens", ScopeKey: "user:user_1", Allowed: false, Remaining: 0, RetryAfterMs: 250},
+		}
+		resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{Plaintext: plaintext, Cost: 3})
+		if err != nil {
+			t.Fatalf("VerifyKey: %v", err)
+		}
+		if resp.GetValid() || resp.GetResult() != apikeyv1.VerifyResult_VERIFY_RESULT_RATE_LIMITED {
+			t.Fatalf("response = %+v, want RATE_LIMITED", resp)
+		}
+		assertIdentity(t, resp, key)
+		if len(resp.GetLimitDecisions()) != 2 {
+			t.Fatalf("LimitDecisions = %d, want 2", len(resp.GetLimitDecisions()))
+		}
+		if resp.GetLimitDecisions()[1].GetRetryAfterMs() != 250 {
+			t.Fatalf("retry_after_ms = %d, want 250", resp.GetLimitDecisions()[1].GetRetryAfterMs())
+		}
+		got, err := r.svc.GetKey(context.Background(), &apikeyv1.GetKeyRequest{KeyId: key.GetKeyId()})
+		if err != nil {
+			t.Fatalf("GetKey: %v", err)
+		}
+		if got.GetKey().GetRemainingUses() != 2 || got.GetKey().GetLastVerifiedAt() != nil {
+			t.Fatalf("rate-limited verify mutated key: %+v", got.GetKey())
+		}
+	})
+}
+
 func TestVerifyKeyRateLimiterErrorMapsUnavailable(t *testing.T) {
 	r := newRig(t)
 	_, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
