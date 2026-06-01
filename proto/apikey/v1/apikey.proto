@@ -160,8 +160,9 @@ message VerifyKeyRequest {
   // and not enforced by itself.
   repeated string required_permissions = 2;
   string action = 3;
-  // cost is consumed against every limit_ref on the key. Caller-supplied
-  // (token count from LLM provider response, request weight, etc.).
+  // cost is consumed against every limit_ref on the key. Values <= 0 default
+  // to 1. Positive values are caller-supplied weights such as token count
+  // from an LLM provider response or request weight.
   int64 cost = 4;
   string request_id = 5;
   // skip_ratelimit lets a smart gateway that has cached the key skip the

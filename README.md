@@ -88,7 +88,7 @@ resp, _ := client.VerifyKey(ctx, &apikeyv1.VerifyKeyRequest{
     RequestId: "...",
 })
 if !resp.Valid {
-    // 403 / 429 — see resp.Reason and resp.LimitDecisions
+    // 403 / 429 — see resp.Result and resp.LimitDecisions
 }
 ```
 

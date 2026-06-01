@@ -90,6 +90,16 @@ func TestRunMigrationsRejectsBadDSN(t *testing.T) {
 	}
 }
 
+func TestRunMigrationsIsIdempotent(t *testing.T) {
+	dsn := testPostgresDSN(t)
+	if err := postgres.RunMigrations(dsn); err != nil {
+		t.Fatalf("first RunMigrations: %v", err)
+	}
+	if err := postgres.RunMigrations(dsn); err != nil {
+		t.Fatalf("second RunMigrations: %v", err)
+	}
+}
+
 func TestRunMigrationsReportsDirtyVersion(t *testing.T) {
 	dsn := testPostgresDSN(t)
 	ctx := context.Background()
