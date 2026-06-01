@@ -5,6 +5,6 @@
 ## Tests
 
 - [ ] `go test ./...`
-- [ ] `pnpm build` in `docs-site/`
-- [ ] `docker build --target server -t rate-limiter:local .`
-
+- [ ] `bash scripts/run-coverage.sh && bash scripts/coverage-gate.sh cover.out --config .coverage-gates.yml`
+- [ ] `test/e2e/run-docker-compose-suite.sh`
+- [ ] `docker build --target server -t keychain:local .`

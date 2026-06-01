@@ -1,5 +1,5 @@
 name: Bug report
-description: Report incorrect quota or rate limiting behavior.
+description: Report incorrect API-key issuance or verification behavior.
 title: "[bug]: "
 labels: ["bug"]
 body:
@@ -20,5 +20,4 @@ body:
     id: repro
     attributes:
       label: Reproduction
-      description: Include request shape, limits, and Redis topology when possible.
-
+      description: Include RPC request shape, store backend, and any key policy fields involved.

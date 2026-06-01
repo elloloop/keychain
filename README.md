@@ -32,18 +32,18 @@ identity                          your gateway / app APIs
 - **Limit refs** — each key can carry references to limits defined in
   `rate-limiter`. `VerifyKey` evaluates them inline and returns a unified
   decision.
-- **Audit log** — every create/verify/revoke/rotate is recorded
-  out-of-band; never blocks the hot path.
 
 ## What it does not do
 
 - **No application-layer auth for end users.** That's identity. Keychain's
   callers are your own services.
 - **No edge / global verify.** Keychain is regional. Co-locate it with your
-  gateway and use a Redis cache layer (v0.2) for sub-ms hot-path lookups.
+  gateway and add a gateway-side cache for sub-ms hot-path lookups.
 - **No tokenization.** Token counts are caller-supplied; keychain (via
   rate-limiter) does the math, not the counting.
 - **No standalone rate-limiting primitive.** That's rate-limiter's job.
+- **No audit sink yet.** The service returns verification decisions inline;
+  durable audit/export wiring is not implemented.
 
 ## Quick start
 
@@ -54,8 +54,8 @@ docker compose up -d --build
 The local stack starts Postgres and keychain:
 
 - gRPC: `localhost:28080`
-- Metrics: `http://localhost:29090/metrics`
-- Postgres: `localhost:5432`
+- Health: `http://localhost:29090/healthz`
+- Postgres: `localhost:25432`
 
 ## Configuration
 
