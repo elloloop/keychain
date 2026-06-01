@@ -125,11 +125,7 @@ fuzz: ## Fuzz smoke — seed corpus + 15s per target
 
 .PHONY: e2e
 e2e: ## Docker-compose end-to-end
-	test/e2e/docker-compose-critical-rpcs.sh
-	test/e2e/docker-compose-key-behavior.sh
-	test/e2e/docker-compose-admin-errors.sh
-	test/e2e/docker-compose-usage-concurrency.sh
-	test/e2e/docker-compose-lifecycle-privacy.sh
+	test/e2e/run-docker-compose-suite.sh
 
 # ---------------------------------------------------------------------------
 # Local services

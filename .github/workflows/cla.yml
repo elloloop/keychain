@@ -4,34 +4,181 @@ on:
   issue_comment:
     types: [created]
   pull_request_target:
-    types: [opened, closed, synchronize]
+    types: [opened, reopened, synchronize]
 
 permissions:
-  actions: write
   contents: write
-  pull-requests: write
+  issues: write
+  pull-requests: read
   statuses: write
 
 jobs:
   cla:
     name: CLA signature check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - name: CLA Assistant
+      - name: Check CLA
         if: |
-          (github.event.comment.body == 'recheck' ||
-           github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') ||
-          github.event_name == 'pull_request_target'
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          github.event_name == 'pull_request_target' ||
+          (
+            github.event_name == 'issue_comment' &&
+            github.event.issue.pull_request &&
+            (
+              github.event.comment.body == 'recheck' ||
+              github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
+            )
+          )
+        uses: actions/github-script@v9
         with:
-          path-to-signatures: 'signatures/version1/cla.json'
-          path-to-document: 'https://github.com/elloloop/keychain/blob/main/CLA.md'
-          branch: 'cla-signatures'
-          allowlist: dependabot[bot],github-actions[bot],renovate[bot]
-          create-file-commit-message: 'chore: initialize CLA signatures store'
-          signed-commit-message: '$contributorName has signed the CLA in #$pullRequestNo'
-          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
-          custom-allsigned-prcomment: 'All committers have signed the CLA; thanks.'
-          lock-pullrequest-aftermerge: false
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const signatureBranch = 'cla-signatures';
+            const signaturePath = 'signatures/version1/cla.json';
+            const signComment = 'I have read the CLA Document and I hereby sign the CLA';
+            const marker = '<!-- keychain-cla-check -->';
+            const allowlist = ['dependabot[bot]', 'github-actions[bot]', 'renovate[bot]'];
+
+            async function pullRequest() {
+              if (context.eventName === 'pull_request_target') {
+                return context.payload.pull_request;
+              }
+              const { data } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: context.payload.issue.number,
+              });
+              return data;
+            }
+
+            function allowed(login) {
+              return allowlist.some((pattern) => {
+                if (pattern.endsWith('*')) return login.startsWith(pattern.slice(0, -1));
+                return login === pattern;
+              });
+            }
+
+            async function signatures() {
+              try {
+                const { data } = await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path: signaturePath,
+                  ref: signatureBranch,
+                });
+                return {
+                  content: JSON.parse(Buffer.from(data.content, 'base64').toString('utf8')),
+                  sha: data.sha,
+                };
+              } catch (err) {
+                core.setFailed(`CLA signature store is unavailable on ${signatureBranch}:${signaturePath}: ${err.message}`);
+                throw err;
+              }
+            }
+
+            function signerKeys(entry) {
+              return new Set([entry.id, entry.login, entry.name].filter((v) => v !== undefined && v !== null).map(String));
+            }
+
+            function isSigned(committer, signedContributors) {
+              const keys = new Set([committer.id, committer.login].filter((v) => v !== undefined && v !== null).map(String));
+              return signedContributors.some((entry) => {
+                for (const key of signerKeys(entry)) {
+                  if (keys.has(key)) return true;
+                }
+                return false;
+              });
+            }
+
+            async function committers(pr) {
+              const commits = await github.paginate(github.rest.pulls.listCommits, {
+                owner,
+                repo,
+                pull_number: pr.number,
+                per_page: 100,
+              });
+              const byLogin = new Map();
+              for (const commit of commits) {
+                const login = commit.author?.login || commit.commit.author?.email || commit.sha;
+                const id = commit.author?.id || null;
+                if (!byLogin.has(login)) byLogin.set(login, { login, id });
+              }
+              return [...byLogin.values()].filter((committer) => !allowed(committer.login));
+            }
+
+            async function saveSignature(file, actor) {
+              const contributors = file.content.signedContributors || [];
+              if (contributors.some((entry) => signerKeys(entry).has(String(actor.id)) || signerKeys(entry).has(actor.login))) {
+                return file;
+              }
+              const next = {
+                ...file.content,
+                signedContributors: [
+                  ...contributors,
+                  {
+                    name: actor.login,
+                    login: actor.login,
+                    id: actor.id,
+                    signed_at: new Date().toISOString(),
+                  },
+                ],
+              };
+              const { data } = await github.rest.repos.createOrUpdateFileContents({
+                owner,
+                repo,
+                path: signaturePath,
+                branch: signatureBranch,
+                sha: file.sha,
+                message: `${actor.login} has signed the CLA in #${context.payload.issue.number}`,
+                content: Buffer.from(JSON.stringify(next, null, 2) + '\n').toString('base64'),
+              });
+              return { content: next, sha: data.content.sha };
+            }
+
+            async function upsertComment(issueNumber, body) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number: issueNumber,
+                per_page: 100,
+              });
+              const existing = comments.find((comment) => comment.user.type === 'Bot' && comment.body.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+                return;
+              }
+              await github.rest.issues.createComment({ owner, repo, issue_number: issueNumber, body });
+            }
+
+            async function setStatus(sha, state, description) {
+              await github.rest.repos.createCommitStatus({
+                owner,
+                repo,
+                sha,
+                state,
+                context: 'CLA signature check',
+                description,
+                target_url: `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${context.runId}`,
+              });
+            }
+
+            const pr = await pullRequest();
+            let file = await signatures();
+            if (context.eventName === 'issue_comment' && context.payload.comment.body === signComment) {
+              file = await saveSignature(file, context.payload.comment.user);
+            }
+
+            const unsigned = (await committers(pr)).filter((committer) => !isSigned(committer, file.content.signedContributors || []));
+            if (unsigned.length === 0) {
+              await setStatus(pr.head.sha, 'success', 'All committers have signed the CLA');
+              await upsertComment(pr.number, `${marker}\nAll committers have signed the CLA; thanks.`);
+              return;
+            }
+
+            const names = unsigned.map((committer) => `@${committer.login}`).join(', ');
+            await setStatus(pr.head.sha, 'failure', 'One or more committers must sign the CLA');
+            await upsertComment(
+              pr.number,
+              `${marker}\n${names}: please read [CLA.md](https://github.com/${owner}/${repo}/blob/main/CLA.md), then comment exactly:\n\n\`${signComment}\``
+            );
+            core.setFailed(`Committers must sign the CLA: ${unsigned.map((committer) => committer.login).join(', ')}`);

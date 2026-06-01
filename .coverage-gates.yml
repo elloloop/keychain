@@ -10,10 +10,10 @@ include:
   - pkg/
 
 packages:
-  cmd/keychain: 95
+  cmd/keychain: 96
   internal/config: 100
   keychainserver: 100
-  keychainserver/store/conformance: 79
+  keychainserver/store/conformance: 79.5
   keychainserver/store/memory: 100
-  keychainserver/store/postgres: 95
+  keychainserver/store/postgres: 97
   pkg/keymat: 100
