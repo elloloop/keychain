@@ -400,6 +400,41 @@ func TestVerifyKeyValidWithLimitsCallsRateLimiter(t *testing.T) {
 	}
 }
 
+func TestVerifyKeyLimitsDefaultCostToOne(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cost int64
+	}{
+		{name: "omitted"},
+		{name: "negative", cost: -50},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			_, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {
+				req.LimitRefs = []*apikeyv1.LimitRef{{LimitId: "requests", ScopeKey: "user:user_1"}}
+			})
+			r.rl.decisions = allowDecisions([]store.LimitRef{{LimitID: "requests", ScopeKey: "user:user_1"}})
+
+			resp, err := r.svc.VerifyKey(context.Background(), &apikeyv1.VerifyKeyRequest{
+				Plaintext: plaintext,
+				Cost:      tc.cost,
+			})
+			if err != nil {
+				t.Fatalf("VerifyKey: %v", err)
+			}
+			if !resp.GetValid() {
+				t.Fatalf("Valid = false, want true; result = %v", resp.GetResult())
+			}
+			if len(r.rl.calls) != 1 {
+				t.Fatalf("rate-limiter called %d times, want 1", len(r.rl.calls))
+			}
+			if r.rl.calls[0].cost != 1 {
+				t.Fatalf("cost forwarded = %d, want default cost 1", r.rl.calls[0].cost)
+			}
+		})
+	}
+}
+
 func TestVerifyKeySkipRatelimitBypassesClient(t *testing.T) {
 	r := newRig(t)
 	_, plaintext := r.createKey(t, func(req *apikeyv1.CreateKeyRequest) {

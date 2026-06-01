@@ -34,6 +34,8 @@ type Server struct {
 
 var newKeyMaterial = keymat.New
 
+const defaultLimitCost int64 = 1
+
 // New constructs a Server from opts. opts.Store is required; opts.RateLimiter
 // is optional — when nil, VerifyKey for a key that carries LimitRefs and is
 // not called with SkipRatelimit=true fails closed with FailedPrecondition.
@@ -301,7 +303,7 @@ func (s *Server) VerifyKey(ctx context.Context, req *apikeyv1.VerifyKeyRequest) 
 		if s.rl == nil {
 			return nil, status.Error(codes.FailedPrecondition, "rate-limiter client not configured but key has limit_refs")
 		}
-		decisions, err := s.rl.Consume(ctx, k.LimitRefs, req.GetCost(), req.GetRequestId())
+		decisions, err := s.rl.Consume(ctx, k.LimitRefs, limitCost(req.GetCost()), req.GetRequestId())
 		if err != nil {
 			return nil, status.Errorf(codes.Unavailable, "rate-limiter consume: %v", err)
 		}
@@ -339,6 +341,13 @@ func (s *Server) VerifyKey(ctx context.Context, req *apikeyv1.VerifyKeyRequest) 
 
 func notFound() *apikeyv1.VerifyKeyResponse {
 	return &apikeyv1.VerifyKeyResponse{Result: apikeyv1.VerifyResult_VERIFY_RESULT_NOT_FOUND}
+}
+
+func limitCost(cost int64) int64 {
+	if cost <= 0 {
+		return defaultLimitCost
+	}
+	return cost
 }
 
 func hasAllPermissions(have, required []string) bool {

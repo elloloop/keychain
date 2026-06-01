@@ -128,6 +128,10 @@ func serveWithContext(ctx context.Context, cfg config.Config, logger *slog.Logge
 
 	metricsSrv := startMetricsServer(ctx, cfg.MetricsBindAddr, logger)
 
+	return serveUntilDone(ctx, server, lis, metricsSrv, logger)
+}
+
+func serveUntilDone(ctx context.Context, server *grpc.Server, lis net.Listener, metricsSrv *http.Server, logger *slog.Logger) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Serve(lis) }()
 
@@ -136,6 +140,7 @@ func serveWithContext(ctx context.Context, cfg config.Config, logger *slog.Logge
 		logger.Info("shutdown signal received")
 	case err := <-errCh:
 		if err != nil {
+			shutdownMetrics(metricsSrv) //nolint:contextcheck // shutdown uses a fresh timeout context because ctx may already be canceled
 			return fmt.Errorf("gRPC serve: %w", err)
 		}
 	}
@@ -226,6 +231,12 @@ func startMetricsServer(ctx context.Context, addr string, logger *slog.Logger) *
 	return srv
 }
 
+func shutdownMetrics(srv *http.Server) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
+}
+
 type grpcStopper interface {
 	GracefulStop()
 	Stop()
@@ -247,9 +258,7 @@ func gracefulStopWithTimeout(grpcSrv grpcStopper, metricsSrv *http.Server, logge
 		logger.Warn("gRPC graceful stop timed out; forcing stop")
 		grpcSrv.Stop()
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = metricsSrv.Shutdown(shutdownCtx)
+	shutdownMetrics(metricsSrv)
 }
 
 func newLogger(level string) *slog.Logger {

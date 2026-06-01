@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/elloloop/keychain/internal/config"
 	"github.com/elloloop/keychain/keychainserver/store"
+	"google.golang.org/grpc"
 )
 
 type exitPanic int
@@ -255,6 +257,26 @@ func TestServeWithContextReturnsOpenStoreError(t *testing.T) {
 	}, discardLogger())
 	if err == nil || !strings.Contains(err.Error(), "open store") {
 		t.Fatalf("serveWithContext err = %v, want open store error", err)
+	}
+}
+
+func TestServeUntilDoneReturnsServeError(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	if err := lis.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	err = serveUntilDone(
+		context.Background(),
+		grpc.NewServer(),
+		lis,
+		&http.Server{ReadHeaderTimeout: time.Second},
+		discardLogger(),
+	)
+	if err == nil || !strings.Contains(err.Error(), "gRPC serve") {
+		t.Fatalf("serveUntilDone err = %v, want gRPC serve error", err)
 	}
 }
 

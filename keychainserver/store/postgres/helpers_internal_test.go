@@ -1,6 +1,9 @@
 package postgres
 
 import (
+	"embed"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -51,5 +54,20 @@ func TestPostgresViolationHelpers(t *testing.T) {
 	}
 	if isUniqueViolation(&pgconn.PgError{Code: "23503"}) {
 		t.Fatal("foreign-key violation reported as unique violation")
+	}
+}
+
+func TestRunMigrationsReportsMissingEmbeddedSource(t *testing.T) {
+	dsn := os.Getenv("KEYCHAIN_TEST_POSTGRES_URL")
+	if dsn == "" {
+		t.Skip("KEYCHAIN_TEST_POSTGRES_URL not set; skipping Postgres-backed test")
+	}
+	orig := migrationsFS
+	migrationsFS = embed.FS{}
+	t.Cleanup(func() { migrationsFS = orig })
+
+	err := RunMigrations(dsn)
+	if err == nil || !strings.Contains(err.Error(), "migrate source") {
+		t.Fatalf("RunMigrations err = %v, want migrate source error", err)
 	}
 }

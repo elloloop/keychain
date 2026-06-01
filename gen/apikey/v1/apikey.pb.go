@@ -1055,8 +1055,9 @@ type VerifyKeyRequest struct {
 	// and not enforced by itself.
 	RequiredPermissions []string `protobuf:"bytes,2,rep,name=required_permissions,json=requiredPermissions,proto3" json:"required_permissions,omitempty"`
 	Action              string   `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"`
-	// cost is consumed against every limit_ref on the key. Caller-supplied
-	// (token count from LLM provider response, request weight, etc.).
+	// cost is consumed against every limit_ref on the key. Values <= 0 default
+	// to 1. Positive values are caller-supplied weights such as token count
+	// from an LLM provider response or request weight.
 	Cost      int64  `protobuf:"varint,4,opt,name=cost,proto3" json:"cost,omitempty"`
 	RequestId string `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// skip_ratelimit lets a smart gateway that has cached the key skip the
