@@ -106,7 +106,8 @@ make verify-ci
   `scripts/coverage-gate.sh` using `.coverage-gates.yml`. The coverage profile
   instruments production packages; the shared conformance harness still runs
   during coverage but is not itself counted as product code.
-- Repository metadata is checked by `scripts/check-codeowners.sh`.
+- Repository metadata is checked by `scripts/check-repository-metadata.sh`,
+  including CODEOWNERS path validity and floating container image tags.
 
 ## Required Test Coverage By Change Type
 

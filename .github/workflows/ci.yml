@@ -34,7 +34,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
       - name: Repository metadata checks
-        run: bash scripts/check-codeowners.sh
+        run: bash scripts/check-repository-metadata.sh
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
@@ -155,26 +155,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Discover and run fuzz targets (seed corpus + 15s each)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t targets < <(
-            grep -rEn --include='*_test.go' '^func (Fuzz[A-Za-z0-9_]+)\(' . \
-              | sed -E 's|^(.*)/[^/]+:[0-9]+:func (Fuzz[A-Za-z0-9_]+).*$|\1\t\2|' \
-              | sort -u
-          )
-          if [[ ${#targets[@]} -eq 0 ]]; then
-            echo "no fuzz targets — skipping"; exit 0
-          fi
-          for entry in "${targets[@]}"; do
-            dir="${entry%$'\t'*}"
-            name="${entry##*$'\t'}"
-            echo "::group::fuzz $name in $dir"
-            go test -run="^${name}$" -timeout=120s "./$dir"
-            go test -run='^$' -fuzz="^${name}$" -fuzztime=15s -parallel=4 -timeout=120s "./$dir"
-            echo "::endgroup::"
-          done
+      - name: Run fuzz targets (15s each)
+        run: bash scripts/run-go-fuzz-targets.sh 15s
 
   docker:
     name: Docker Build
