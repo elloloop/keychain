@@ -64,7 +64,21 @@ check_no_floating_container_tags() {
   )
 }
 
+check_metadata_action_disables_latest() {
+  local file rel
+  while IFS= read -r file; do
+    if grep -q 'uses: docker/metadata-action@' "$file" && ! grep -q 'latest=false' "$file"; then
+      rel="${file#"$ROOT/"}"
+      echo "$rel uses docker/metadata-action without flavor latest=false" >&2
+      fail=1
+    fi
+  done < <(
+    find "$ROOT/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \)
+  )
+}
+
 check_codeowners
 check_no_floating_container_tags
+check_metadata_action_disables_latest
 
 exit "$fail"
