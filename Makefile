@@ -1,11 +1,11 @@
 # Local mirror of .github/workflows/ci.yml.
 #
-# `make ci` runs the gating checks that don't need Docker: lint, module
-# tidiness, vulnerability scan, build, unit/Postgres tests, boot smoke, and
-# a fuzz smoke. Postgres-backed tests run when KEYCHAIN_TEST_POSTGRES_URL is
-# set — `make postgres-up` starts a throwaway Postgres on :5432.
+# `make verify` runs the gating checks that don't need Docker: lint, module
+# tidiness, vulnerability scan, build, race tests, boot smoke, and fuzz smoke.
+# Postgres-backed tests run when KEYCHAIN_TEST_POSTGRES_URL is set —
+# `make postgres-up` starts a throwaway Postgres on :5432.
 #
-# `make ci-full` adds the docker-compose end-to-end test.
+# `make verify-ci` adds the docker-compose end-to-end test.
 #
 # Tool versions are pinned to match CI; bump them in lockstep with the
 # workflow env block.
@@ -21,6 +21,7 @@ GOLANGCI_LINT ?= golangci-lint
 GOVULNCHECK   ?= govulncheck
 
 LINT_BASE_REV ?= origin/main
+POSTGRES_TEST_PORT ?= 5432
 
 .DEFAULT_GOAL := help
 
@@ -29,12 +30,20 @@ LINT_BASE_REV ?= origin/main
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: repo-checks lint tidy-check vuln build test smoke fuzz ## Run all CI gates that don't need Docker
+ci: verify ## Alias for verify
 	@echo "==> make ci: all gates passed"
 
 .PHONY: ci-full
-ci-full: ci e2e ## ci + docker-compose end-to-end
+ci-full: verify-ci ## Alias for verify-ci
 	@echo "==> make ci-full: passed (incl. docker e2e)"
+
+.PHONY: verify
+verify: repo-checks lint tidy-check vuln build test-race smoke test-fuzz ## Standard pre-merge checks without Docker e2e
+	@echo "==> make verify: all gates passed"
+
+.PHONY: verify-ci
+verify-ci: verify test-e2e ## Strict CI/release checks including Docker e2e
+	@echo "==> make verify-ci: all gates passed"
 
 # ---------------------------------------------------------------------------
 # Individual gates
@@ -88,13 +97,31 @@ vuln: ## govulncheck
 	}
 	$(GOVULNCHECK) ./...
 
+.PHONY: vulncheck
+vulncheck: vuln ## Alias for vuln
+
 .PHONY: build
 build: ## go build ./...
 	$(GO) build ./...
 
 .PHONY: test
-test: ## Unit + Postgres tests with race detector
+test: test-fast ## Alias for test-fast
+
+.PHONY: test-fast
+test-fast: ## Fast tests
+	$(GO) test -count=1 ./...
+
+.PHONY: test-race
+test-race: ## Race-enabled tests
 	$(GO) test -count=1 -race -timeout=600s ./...
+
+.PHONY: test-integration
+test-integration: ## Postgres integration tests; requires KEYCHAIN_TEST_POSTGRES_URL
+	@if [ -z "$$KEYCHAIN_TEST_POSTGRES_URL" ]; then \
+		echo "KEYCHAIN_TEST_POSTGRES_URL is required. Run 'make postgres-up' and export the printed DSN." >&2; \
+		exit 1; \
+	fi
+	$(GO) test -count=1 -race -timeout=600s ./cmd/keychain ./keychainserver/store/postgres
 
 .PHONY: test-cover
 test-cover: ## Coverage profile + per-package gates
@@ -109,38 +136,34 @@ smoke: ## Boot smoke tests (tests/smoke)
 		echo "no smoke tests under tests/smoke — skipping"; \
 	fi
 
+.PHONY: test-fuzz
+test-fuzz: ## Fuzz smoke — seed corpus + 15s per target
+	bash scripts/run-go-fuzz-targets.sh 15s
+
 .PHONY: fuzz
-fuzz: ## Fuzz smoke — seed corpus + 15s per target
-	@set -euo pipefail; \
-	targets=$$( \
-		grep -rEn --include='*_test.go' '^func (Fuzz[A-Za-z0-9_]+)\(' . \
-			| sed -E 's|^(.*)/[^/]+:[0-9]+:func (Fuzz[A-Za-z0-9_]+).*$$|\1 \2|' \
-			| sort -u \
-	); \
-	if [ -z "$$targets" ]; then \
-		echo "no fuzz targets — skipping"; \
-		exit 0; \
-	fi; \
-	echo "$$targets" | while read -r dir name; do \
-		echo "==> fuzz $$name in $$dir"; \
-		$(GO) test -run="^$${name}$$" -timeout=120s "./$$dir"; \
-		$(GO) test -run='^$$' -fuzz="^$${name}$$" -fuzztime=15s -parallel=4 -timeout=120s "./$$dir"; \
-	done
+fuzz: test-fuzz ## Alias for test-fuzz
+
+.PHONY: test-bench
+test-bench: ## Benchmarks
+	$(GO) test -bench=. -benchmem ./...
+
+.PHONY: test-e2e
+test-e2e: ## Docker-compose end-to-end
+	test/e2e/run-docker-compose-suite.sh
 
 .PHONY: e2e
-e2e: ## Docker-compose end-to-end
-	test/e2e/run-docker-compose-suite.sh
+e2e: test-e2e ## Alias for test-e2e
 
 # ---------------------------------------------------------------------------
 # Local services
 # ---------------------------------------------------------------------------
 
 .PHONY: postgres-up
-postgres-up: ## Start a throwaway Postgres on :5432 for local tests
-	docker run -d --rm -p 5432:5432 \
+postgres-up: ## Start a throwaway Postgres for local tests
+	docker run -d --rm -p $(POSTGRES_TEST_PORT):5432 \
 		-e POSTGRES_USER=keychain -e POSTGRES_PASSWORD=keychain -e POSTGRES_DB=keychain \
 		--name keychain-postgres postgres:16.13-alpine3.23
-	@echo "export KEYCHAIN_TEST_POSTGRES_URL=postgres://keychain:keychain@localhost:5432/keychain?sslmode=disable"
+	@echo "export KEYCHAIN_TEST_POSTGRES_URL=postgres://keychain:keychain@localhost:$(POSTGRES_TEST_PORT)/keychain?sslmode=disable"
 
 .PHONY: postgres-down
 postgres-down: ## Stop the throwaway Postgres
@@ -177,4 +200,4 @@ install-tools: ## Install pinned lint + vuln tooling
 
 .PHONY: help
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)

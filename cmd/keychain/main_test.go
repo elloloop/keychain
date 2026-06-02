@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -196,28 +199,107 @@ func TestRunDefaultsToServe(t *testing.T) {
 }
 
 func TestServeStopsOnInterrupt(t *testing.T) {
+	if os.Getenv("KEYCHAIN_TEST_INTERRUPT_CHILD") == "1" {
+		if err := serve(); err != nil {
+			_, _ = os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	cmd := exec.Command(exe, "-test.run=^TestServeStopsOnInterrupt$", "-test.v") //nolint:gosec // test subprocess re-executes this test binary
+	cmd.Env = append(os.Environ(),
+		"KEYCHAIN_TEST_INTERRUPT_CHILD=1",
+		"KEYCHAIN_GRPC_BIND_ADDR=127.0.0.1:0",
+		"KEYCHAIN_METRICS_BIND_ADDR=127.0.0.1:0",
+		"KEYCHAIN_STORE=memory",
+		"KEYCHAIN_LOG_LEVEL=info",
+	)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	lines := make(chan string, 100)
+	scanDone := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		scanDone <- scanner.Err()
+		close(lines)
+	}()
+
+	ready := false
+	for !ready {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				t.Fatalf("child exited before serving; stderr=%q", stderr.String())
+			}
+			if strings.Contains(line, "gRPC listening") {
+				ready = true
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("child did not start serving; stderr=%q", stderr.String())
+		}
+	}
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("signal child: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- cmd.Wait() }()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("child serve: %v; stderr=%q", err, stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("child did not stop after interrupt; stderr=%q", stderr.String())
+	}
+	select {
+	case err := <-scanDone:
+		if err != nil {
+			t.Fatalf("scan child stdout: %v", err)
+		}
+	default:
+	}
+}
+
+func TestServeUsesSignalContext(t *testing.T) {
+	orig := notifyContext
+	notifyContext = func(parent context.Context, signals ...os.Signal) (context.Context, context.CancelFunc) {
+		if parent == nil {
+			t.Fatal("parent context is nil")
+		}
+		if len(signals) != 2 || signals[0] != os.Interrupt || signals[1] != syscall.SIGTERM {
+			t.Fatalf("signals = %v, want interrupt and sigterm", signals)
+		}
+		ctx, cancel := context.WithCancel(parent)
+		cancel()
+		return ctx, func() {}
+	}
+	t.Cleanup(func() { notifyContext = orig })
+
 	t.Setenv("KEYCHAIN_GRPC_BIND_ADDR", "127.0.0.1:0")
 	t.Setenv("KEYCHAIN_METRICS_BIND_ADDR", "127.0.0.1:0")
 	t.Setenv("KEYCHAIN_STORE", "memory")
 	t.Setenv("KEYCHAIN_LOG_LEVEL", "error")
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- serve() }()
-	time.Sleep(50 * time.Millisecond)
-	proc, err := os.FindProcess(os.Getpid())
-	if err != nil {
-		t.Fatalf("FindProcess: %v", err)
-	}
-	if err := proc.Signal(os.Interrupt); err != nil {
-		t.Fatalf("Signal: %v", err)
-	}
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("serve did not stop after interrupt")
+	if err := serve(); err != nil {
+		t.Fatalf("serve: %v", err)
 	}
 }
 

@@ -72,7 +72,7 @@ KEYCHAIN_LOG_LEVEL=info
 **Go** — import the generated client:
 
 ```bash
-go get github.com/elloloop/keychain@v0.2.5
+go get github.com/elloloop/keychain@v0.2.6
 ```
 
 ```go
@@ -103,7 +103,7 @@ register it on its own `*grpc.Server`. The container and embedders both
 construct the service through `keychainserver.New`.
 
 ```bash
-go get github.com/elloloop/keychain@v0.2.5
+go get github.com/elloloop/keychain@v0.2.6
 ```
 
 ```go
@@ -157,16 +157,18 @@ identical behaviour.
 
 ```bash
 make help          # list targets
-make ci            # lint, tidy-check, vuln, build, test, smoke, fuzz
+make verify        # standard pre-merge checks without Docker e2e
 make postgres-up   # throwaway Postgres for the DB-backed paths
 make test-cover    # coverage profile + per-package gates
-make ci-full       # ci + docker-compose end-to-end
+make verify-ci     # verify + docker-compose end-to-end
 ```
 
 CI runs golangci-lint, protobuf checks, `govulncheck`, race-enabled tests
 with per-package coverage gates, boot smoke, fuzz smoke, Docker builds, a
 Docker Compose e2e, and a Trivy filesystem scan. CodeQL (`codeql.yml`) and
 a nightly race/fuzz loop (`nightly.yml`) run on a schedule.
+
+The full testing policy and command matrix live in [TESTING.md](./TESTING.md).
 
 ## Releases
 

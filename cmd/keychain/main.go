@@ -38,9 +38,10 @@ import (
 )
 
 var (
-	version = "dev"
-	commit  = "unknown"
-	osExit  = os.Exit
+	version       = "dev"
+	commit        = "unknown"
+	osExit        = os.Exit
+	notifyContext = signal.NotifyContext
 )
 
 func main() {
@@ -90,7 +91,7 @@ func serve() error {
 		return err
 	}
 	logger := newLogger(cfg.LogLevel)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	return serveWithContext(ctx, cfg, logger)
