@@ -21,6 +21,14 @@ go test -race ./...
 make test-race
 ```
 
+Coverage gate:
+
+```bash
+make postgres-up
+export KEYCHAIN_TEST_POSTGRES_URL=postgres://keychain:keychain@localhost:5432/keychain?sslmode=disable
+make test-cover
+```
+
 Postgres integration tests:
 
 ```bash
@@ -67,6 +75,9 @@ Standard pre-merge checks:
 make verify
 ```
 
+`make verify` includes race-enabled coverage and therefore requires
+`KEYCHAIN_TEST_POSTGRES_URL`.
+
 Strict CI/release checks, including Docker Compose E2E:
 
 ```bash
@@ -92,7 +103,9 @@ make verify-ci
   non-serving commands.
 - Fuzz targets currently cover key material generation and validation.
 - Coverage is merged by `scripts/run-coverage.sh` and enforced by
-  `scripts/coverage-gate.sh` using `.coverage-gates.yml`.
+  `scripts/coverage-gate.sh` using `.coverage-gates.yml`. The coverage profile
+  instruments production packages; the shared conformance harness still runs
+  during coverage but is not itself counted as product code.
 - Repository metadata is checked by `scripts/check-codeowners.sh`.
 
 ## Required Test Coverage By Change Type

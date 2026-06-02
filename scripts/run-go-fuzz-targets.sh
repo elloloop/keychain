@@ -31,7 +31,10 @@ finish_report() {
   fi
 }
 
-mapfile -t targets < <(
+targets=()
+while IFS= read -r target; do
+  targets+=("$target")
+done < <(
   grep -rEn \
     --include='*_test.go' \
     --exclude-dir=.claude \

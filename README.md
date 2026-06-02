@@ -157,9 +157,10 @@ identical behaviour.
 
 ```bash
 make help          # list targets
-make verify        # standard pre-merge checks without Docker e2e
 make postgres-up   # throwaway Postgres for the DB-backed paths
+export KEYCHAIN_TEST_POSTGRES_URL=postgres://keychain:keychain@localhost:5432/keychain?sslmode=disable
 make test-cover    # coverage profile + per-package gates
+make verify        # standard pre-merge checks without Docker e2e
 make verify-ci     # verify + docker-compose end-to-end
 ```
 
