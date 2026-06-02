@@ -70,14 +70,30 @@ func (c Config) Validate() error {
 		if c.PostgresURL == "" {
 			return errors.New("KEYCHAIN_POSTGRES_URL is required when KEYCHAIN_STORE=postgres")
 		}
-		if _, err := url.Parse(c.PostgresURL); err != nil {
-			return fmt.Errorf("KEYCHAIN_POSTGRES_URL invalid: %w", err)
+		if err := validatePostgresURL(c.PostgresURL); err != nil {
+			return err
 		}
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("KEYCHAIN_LOG_LEVEL=%q is unsupported", c.LogLevel)
+	}
+	return nil
+}
+
+func validatePostgresURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("KEYCHAIN_POSTGRES_URL invalid: %w", err)
+	}
+	switch u.Scheme {
+	case "postgres", "postgresql":
+	default:
+		return fmt.Errorf("KEYCHAIN_POSTGRES_URL must use postgres or postgresql scheme, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("KEYCHAIN_POSTGRES_URL must include a host")
 	}
 	return nil
 }
@@ -111,11 +127,31 @@ func redactURL(raw string) string {
 		return ""
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
+	if err != nil {
 		return raw
 	}
-	if _, hasPwd := u.User.Password(); hasPwd {
-		u.User = url.UserPassword(u.User.Username(), "REDACTED")
+	redacted := false
+	if u.User != nil {
+		_, hasPwd := u.User.Password()
+		if hasPwd {
+			u.User = url.UserPassword(u.User.Username(), "REDACTED")
+			redacted = true
+		}
 	}
-	return u.String()
+	q := u.Query()
+	for k, values := range q {
+		switch strings.ToLower(k) {
+		case "password", "sslpassword":
+			for i := range values {
+				values[i] = "REDACTED"
+			}
+			q[k] = values
+			redacted = true
+		}
+	}
+	if redacted {
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+	return raw
 }

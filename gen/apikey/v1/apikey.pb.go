@@ -1050,9 +1050,8 @@ type VerifyKeyRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Plaintext string                 `protobuf:"bytes,1,opt,name=plaintext,proto3" json:"plaintext,omitempty"`
 	// required_permissions must all be present on the key. Empty means no
-	// permission check. action is a free-form audit tag (e.g.
-	// "chat.completions:write") that is recorded in the verify audit row
-	// and not enforced by itself.
+	// permission check. action is a caller-supplied label for the attempted
+	// operation; keychain currently does not persist audit rows.
 	RequiredPermissions []string `protobuf:"bytes,2,rep,name=required_permissions,json=requiredPermissions,proto3" json:"required_permissions,omitempty"`
 	Action              string   `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"`
 	// cost is consumed against every limit_ref on the key. Values <= 0 default

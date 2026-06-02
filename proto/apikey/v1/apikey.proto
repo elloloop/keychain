@@ -155,9 +155,8 @@ message CreateKeyResponse {
 message VerifyKeyRequest {
   string plaintext = 1;
   // required_permissions must all be present on the key. Empty means no
-  // permission check. action is a free-form audit tag (e.g.
-  // "chat.completions:write") that is recorded in the verify audit row
-  // and not enforced by itself.
+  // permission check. action is a caller-supplied label for the attempted
+  // operation; keychain currently does not persist audit rows.
   repeated string required_permissions = 2;
   string action = 3;
   // cost is consumed against every limit_ref on the key. Values <= 0 default
