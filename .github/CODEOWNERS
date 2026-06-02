@@ -4,6 +4,4 @@
 /Dockerfile @iarunsaragadam
 /go.mod @iarunsaragadam
 /go.sum @iarunsaragadam
-/quota/ @iarunsaragadam
 /gen/ @iarunsaragadam
-/internal/redisstore/scripts/ @iarunsaragadam

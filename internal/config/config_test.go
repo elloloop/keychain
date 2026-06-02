@@ -119,6 +119,47 @@ func TestValidateRejectsInvalidPostgresURL(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsUnsupportedPostgresURLShape(t *testing.T) {
+	for _, raw := range []string{
+		"http://db:5432/keychain",
+		"postgres://",
+		"postgresql:///keychain",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			c := config.Config{
+				GRPCBindAddr:    "0.0.0.0:8080",
+				MetricsBindAddr: "0.0.0.0:9090",
+				Store:           config.StorePostgres,
+				PostgresURL:     raw,
+				LogLevel:        "info",
+			}
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "KEYCHAIN_POSTGRES_URL") {
+				t.Fatalf("Validate err = %v, want Postgres URL shape error", err)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsPostgresURLSchemes(t *testing.T) {
+	for _, raw := range []string{
+		"postgres://u:p@db:5432/keychain?sslmode=disable",
+		"postgresql://u:p@db:5432/keychain?sslmode=disable",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			c := config.Config{
+				GRPCBindAddr:    "0.0.0.0:8080",
+				MetricsBindAddr: "0.0.0.0:9090",
+				Store:           config.StorePostgres,
+				PostgresURL:     raw,
+				LogLevel:        "info",
+			}
+			if err := c.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateAcceptsEverySupportedLogLevel(t *testing.T) {
 	for _, level := range []string{"debug", "info", "warn", "error"} {
 		t.Run(level, func(t *testing.T) {
@@ -152,21 +193,28 @@ func TestValidateRejectsUnknownLogLevel(t *testing.T) {
 }
 
 func TestRedactedScrubsPostgresPassword(t *testing.T) {
-	c := config.Config{
-		PostgresURL: "postgres://user:supersecret@db:5432/keychain?sslmode=disable",
-	}
-	out := c.Redacted()
-	if strings.Contains(out.PostgresURL, "supersecret") {
-		t.Fatalf("password leaked in redacted form: %q", out.PostgresURL)
-	}
-	if !strings.Contains(out.PostgresURL, "REDACTED") {
-		t.Fatalf("redacted marker missing: %q", out.PostgresURL)
+	for _, raw := range []string{
+		"postgres://user:supersecret@db:5432/keychain?sslmode=disable",
+		"postgres://db:5432/keychain?user=keychain&password=supersecret&sslmode=disable",
+		"postgresql://db:5432/keychain?sslpassword=supersecret",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			c := config.Config{PostgresURL: raw}
+			out := c.Redacted()
+			if strings.Contains(out.PostgresURL, "supersecret") {
+				t.Fatalf("password leaked in redacted form: %q", out.PostgresURL)
+			}
+			if !strings.Contains(out.PostgresURL, "REDACTED") {
+				t.Fatalf("redacted marker missing: %q", out.PostgresURL)
+			}
+		})
 	}
 }
 
 func TestRedactedLeavesPasswordlessAndInvalidURLsAlone(t *testing.T) {
 	for _, raw := range []string{
 		"postgres://user@db:5432/keychain?sslmode=disable",
+		"postgres://user@db:5432/keychain?sslmode=disable&application_name=keychain",
 		"://not a url",
 		"",
 	} {

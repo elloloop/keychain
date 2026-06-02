@@ -29,7 +29,7 @@ LINT_BASE_REV ?= origin/main
 # ---------------------------------------------------------------------------
 
 .PHONY: ci
-ci: lint tidy-check vuln build test smoke fuzz ## Run all CI gates that don't need Docker
+ci: repo-checks lint tidy-check vuln build test smoke fuzz ## Run all CI gates that don't need Docker
 	@echo "==> make ci: all gates passed"
 
 .PHONY: ci-full
@@ -39,6 +39,10 @@ ci-full: ci e2e ## ci + docker-compose end-to-end
 # ---------------------------------------------------------------------------
 # Individual gates
 # ---------------------------------------------------------------------------
+
+.PHONY: repo-checks
+repo-checks: ## Repository metadata checks
+	bash scripts/check-codeowners.sh
 
 .PHONY: lint
 lint: ## golangci-lint, only new issues vs $(LINT_BASE_REV)
