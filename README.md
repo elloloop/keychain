@@ -72,7 +72,7 @@ KEYCHAIN_LOG_LEVEL=info
 **Go** — import the generated client:
 
 ```bash
-go get github.com/elloloop/keychain@v0.2.7
+go get github.com/elloloop/keychain@v0.2.8
 ```
 
 ```go
@@ -103,7 +103,7 @@ register it on its own `*grpc.Server`. The container and embedders both
 construct the service through `keychainserver.New`.
 
 ```bash
-go get github.com/elloloop/keychain@v0.2.7
+go get github.com/elloloop/keychain@v0.2.8
 ```
 
 ```go
