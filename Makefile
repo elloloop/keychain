@@ -1,9 +1,9 @@
 # Local mirror of .github/workflows/ci.yml.
 #
-# `make verify` runs the gating checks that don't need Docker: lint, module
-# tidiness, vulnerability scan, build, race tests, boot smoke, and fuzz smoke.
-# Postgres-backed tests run when KEYCHAIN_TEST_POSTGRES_URL is set —
-# `make postgres-up` starts a throwaway Postgres on :5432.
+# `make verify` runs the gating checks that do not need Docker Compose: lint,
+# module tidiness, vulnerability scan, build, race-enabled coverage, boot
+# smoke, and fuzz smoke. Coverage requires KEYCHAIN_TEST_POSTGRES_URL; `make
+# postgres-up` starts a throwaway Postgres on :5432.
 #
 # `make verify-ci` adds the docker-compose end-to-end test.
 #
@@ -38,7 +38,7 @@ ci-full: verify-ci ## Alias for verify-ci
 	@echo "==> make ci-full: passed (incl. docker e2e)"
 
 .PHONY: verify
-verify: repo-checks lint tidy-check vuln build test-race smoke test-fuzz ## Standard pre-merge checks without Docker e2e
+verify: repo-checks lint tidy-check vuln build test-cover smoke test-fuzz ## Standard pre-merge checks without Docker e2e
 	@echo "==> make verify: all gates passed"
 
 .PHONY: verify-ci
@@ -125,6 +125,10 @@ test-integration: ## Postgres integration tests; requires KEYCHAIN_TEST_POSTGRES
 
 .PHONY: test-cover
 test-cover: ## Coverage profile + per-package gates
+	@if [ -z "$$KEYCHAIN_TEST_POSTGRES_URL" ]; then \
+		echo "KEYCHAIN_TEST_POSTGRES_URL is required. Run 'make postgres-up' and export the printed DSN." >&2; \
+		exit 1; \
+	fi
 	bash scripts/run-coverage.sh
 	bash scripts/coverage-gate.sh cover.out --config .coverage-gates.yml
 

@@ -73,6 +73,11 @@ if [[ "${1:-}" == "--config" ]]; then
       print "default\t" line
       next
     }
+    /^[[:space:]]*total:[[:space:]]*/ {
+      line=$0; sub(/^[[:space:]]*total:[[:space:]]*/, "", line); sub(/[[:space:]]+#.*$/, "", line)
+      print "total\t" line
+      next
+    }
     /^[[:space:]]*include:[[:space:]]*$/ { section="include"; next }
     /^[[:space:]]*packages:[[:space:]]*$/ { section="packages"; next }
     section == "include" && /^[[:space:]]*-[[:space:]]*/ {
@@ -99,6 +104,7 @@ if [[ "${1:-}" == "--config" ]]; then
     echo "coverage-gate: config missing default threshold" >&2
     exit 2
   fi
+  total_threshold="$(awk -F '\t' '$1 == "total" { print $2 }' "$config_tmp")"
 
   includes=()
   while IFS=$'\t' read -r _ include; do
@@ -111,6 +117,8 @@ if [[ "${1:-}" == "--config" ]]; then
   seen_tmp="$(mktemp)"
 
   fail=0
+  included_total=0
+  included_covered=0
   while read -r pkg stmts cov; do
     included=0
     for include in "${includes[@]}"; do
@@ -121,6 +129,8 @@ if [[ "${1:-}" == "--config" ]]; then
     if [[ $included -eq 0 ]]; then
       continue
     fi
+    included_total=$((included_total + stmts))
+    included_covered=$((included_covered + cov))
 
     threshold="$(awk -F '\t' -v pkg="$pkg" -v fallback="$default_threshold" '
       $1 == "package" && $2 == pkg { print $3; found=1 }
@@ -138,6 +148,22 @@ if [[ "${1:-}" == "--config" ]]; then
       echo "coverage-gate: ok    $pkg  $pct% >= $threshold% ($cov/$stmts stmts)"
     fi
   done < "$tmp"
+
+  if [[ -n "$total_threshold" ]]; then
+    if [[ $included_total -eq 0 ]]; then
+      echo "coverage-gate: FAIL  total  no included statements found"
+      fail=1
+    else
+      pct=$(awk -v c="$included_covered" -v t="$included_total" 'BEGIN { printf "%.2f", (c/t)*100 }')
+      cmp=$(awk -v p="$pct" -v th="$total_threshold" 'BEGIN { print (p+0 < th+0) ? "fail" : "ok" }')
+      if [[ "$cmp" == "fail" ]]; then
+        echo "coverage-gate: FAIL  total  $pct% < $total_threshold% ($included_covered/$included_total stmts)"
+        fail=1
+      else
+        echo "coverage-gate: ok    total  $pct% >= $total_threshold% ($included_covered/$included_total stmts)"
+      fi
+    fi
+  fi
 
   while IFS=$'\t' read -r _ pkg _; do
     if ! grep -Fxq "$pkg" "$seen_tmp"; then
