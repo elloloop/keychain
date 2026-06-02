@@ -176,8 +176,8 @@ The full testing policy and command matrix live in [TESTING.md](./TESTING.md).
 Push a `v*` tag. The release re-runs every CI gate, then:
 
 - builds and pushes the multi-arch image
-  `ghcr.io/elloloop/keychain:<version>` (and `:latest`) with SBOM and
-  provenance attestations;
+  `ghcr.io/elloloop/keychain:<version>` with SBOM and provenance
+  attestations;
 - signs each tag with cosign keyless OIDC;
 - scans the published image with Trivy (HIGH/CRITICAL gate, SARIF to GitHub
   Security);

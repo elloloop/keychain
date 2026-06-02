@@ -51,7 +51,7 @@ verify-ci: verify test-e2e ## Strict CI/release checks including Docker e2e
 
 .PHONY: repo-checks
 repo-checks: ## Repository metadata checks
-	bash scripts/check-codeowners.sh
+	bash scripts/check-repository-metadata.sh
 
 .PHONY: lint
 lint: ## golangci-lint, only new issues vs $(LINT_BASE_REV)
